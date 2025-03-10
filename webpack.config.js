@@ -13,6 +13,7 @@ const config = {
         background: './src/background.js',
         popup: './src/popup.js',
         content: './src/content.js',
+        offscreen: './src/offscreen.js'
     },
     output: {
         path: path.resolve(__dirname, 'build'),
@@ -22,6 +23,12 @@ const config = {
         new HtmlWebpackPlugin({
             template: './src/popup.html',
             filename: 'popup.html',
+            chunks: ['popup']
+        }),
+        new HtmlWebpackPlugin({
+            template: './src/offscreen.html',
+            filename: 'offscreen.html',
+            chunks: ['offscreen']
         }),
         new CopyPlugin({
             patterns: [
@@ -33,23 +40,22 @@ const config = {
                     from: "src/popup.css",
                     to: "popup.css"
                 },
-                // Add new pattern for model files
+                // Add pattern for model files - make sure the path is correct
                 {
                     from: "models",
                     to: "models",
-                    // Optional: you can add filtering if needed
-                    // globOptions: {
-                    //     ignore: ["**/*.txt", "**/.DS_Store"],
-                    // }
+                    globOptions: {
+                        ignore: ["**/*.txt", "**/.DS_Store"],
+                    }
                 }
             ],
         })
     ],
-    // Add this to handle large files properly
+    // Increase limits for ONNX models which can be large
     performance: {
         hints: false,
-        maxEntrypointSize: 512000,
-        maxAssetSize: 512000
+        maxEntrypointSize: 10485760, // 10MB
+        maxAssetSize: 10485760 // 10MB
     }
 };
 

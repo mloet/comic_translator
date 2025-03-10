@@ -1,54 +1,84 @@
-// background.js - Handles requests from the UI, runs the model, then sends back a response
+// background.js - Service worker that manages the offscreen document
 
-import { pipeline, env } from '@xenova/transformers';
+// Check if offscreen document is already created
+async function ensureOffscreenDocument() {
+  // Check if offscreen document is already open
+  const existingContexts = await chrome.runtime.getContexts({});
+  const offscreenExists = existingContexts.some(
+    (context) => context.contextType === "OFFSCREEN_DOCUMENT"
+  );
 
-env.allowLocalModels = false;
-env.backends.onnx.wasm.numThreads = 1;
-
-class PipelineSingleton {
-    static task = 'object-detection';
-    static model = 'Xenova/detr-resnet-50';
-    static instance = null;
-
-    static async getInstance(progress_callback = null) {
-        if (this.instance === null) {
-            this.instance = pipeline(this.task, this.model, { progress_callback });
-        }
-
-        return this.instance;
+  // Create offscreen document if it doesn't exist
+  if (!offscreenExists) {
+    try {
+      await chrome.offscreen.createDocument({
+        url: "offscreen.html",
+        reasons: ["WORKERS"],
+        justification: "Run ONNX model for object detection"
+      });
+      console.log("Offscreen document created successfully");
+    } catch (error) {
+      console.error("Error creating offscreen document:", error);
     }
+  } else {
+    console.log("Offscreen document already exists");
+  }
 }
 
-// Process image and detect objects
-const detectObjects = async (imageData) => {
-    try {
-        let model = await PipelineSingleton.getInstance((data) => {
-            console.log(data);
-        });;
+// Global map to store pendingRequests with their respective callbacks
+const pendingRequests = new Map();
+let requestId = 0;
 
-        let result = await model(imageData, {
-            threshold: 0.5,
-            percentage: true,
-        });
-
-        return { results: result };
-    } catch (error) {
-        console.error('Error in object detection:', error);
-        return { error: error.message };
-    }
-};
-
-// Listen for messages from popup.js
+// Set up detection results listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'detectObjects') {
-        (async function () {
-            try {
-                const result = await detectObjects(message.imageData);
-                sendResponse(result);
-            } catch (error) {
-                sendResponse({ error: error.message });
-            }
-        })();
-        return true;
+  if (message.action === "detectionResults") {
+    // Find the original request callback using requestId
+    const callback = pendingRequests.get(message.requestId);
+
+    if (callback) {
+      // Forward the results directly to the callback
+      if (message.error) {
+        callback({ error: message.error });
+      } else {
+        callback({ results: message.results });
+      }
+
+      // Remove this request from the map
+      pendingRequests.delete(message.requestId);
+    } else {
+      console.warn("Received results for unknown request:", message.requestId);
     }
+
+    // No need to send a response here
+    return false;
+  }
+});
+
+// Handle messages from popup.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "initDetection") {
+    console.log("Received detection request from popup");
+
+    // Create a unique ID for this request
+    const currentRequestId = requestId++;
+
+    // Store the sendResponse callback in our map
+    pendingRequests.set(currentRequestId, sendResponse);
+
+    // Ensure offscreen document exists and send the request
+    ensureOffscreenDocument().then(() => {
+      chrome.runtime.sendMessage({
+        action: "detectObjects",
+        imageData: message.imageData,
+        requestId: currentRequestId
+      });
+    }).catch(error => {
+      // If there's an error creating the offscreen document
+      sendResponse({ error: `Error creating offscreen document: ${error.message}` });
+      pendingRequests.delete(currentRequestId);
+    });
+
+    // Return true to indicate we'll respond asynchronously
+    return true;
+  }
 });

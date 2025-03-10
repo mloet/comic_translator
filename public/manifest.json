@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Object Detection Extension",
-  "description": "Transformers.js | DETR Object Detection",
+  "name": "Comic Bubble Detection Extension",
+  "description": "YOLOv8 Comic Bubble Detection using Offscreen API",
   "version": "0.0.1",
   "permissions": [
     "activeTab",
     "scripting",
     "contextMenus",
     "storage",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "offscreen"
   ],
   "background": {
     "service_worker": "background.js",
@@ -24,14 +25,14 @@
       ]
     }
   ],
-  "minimum_chrome_version": "92",
+  "minimum_chrome_version": "109",
   "action": {
     "default_icon": {
       "16": "icons/icon.png",
       "24": "icons/icon.png",
       "32": "icons/icon.png"
     },
-    "default_title": "Transformers.js",
+    "default_title": "Comic Bubble Detector",
     "default_popup": "popup.html"
   },
   "content_security_policy": {
@@ -45,7 +46,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "models/*"
+        "models/*",
+        "offscreen.html"
       ],
       "matches": [
         "<all_urls>"
