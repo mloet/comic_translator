@@ -47,6 +47,15 @@ const config = {
                     globOptions: {
                         ignore: ["**/*.txt", "**/.DS_Store"],
                     }
+                },
+                // Add pattern for Tesseract files
+                {
+                    from: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
+                    to: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js"
+                },
+                {
+                    from: "local_tesseract/dist/worker.min.js",
+                    to: "local_tesseract/worker.min.js"
                 }
             ],
         })
