@@ -1,6 +1,6 @@
 import * as ort from "onnxruntime-web";
 import Tesseract from 'tesseract.js';
-// import cv from "@techstark/opencv-js";
+import { Image as ImageJS } from 'image-js';
 
 const authKey = "a011d0fc-a730-4ab9-b682-526495ade881:fx";
 const MODEL_PATH = chrome.runtime.getURL("models/bubble_seg.onnx");
@@ -38,13 +38,6 @@ async function initializeWorker() {
     await tesseract_worker.setParameters({
       // tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\'":;() ', // Added punctuation and space
       preserve_interword_spaces: '1',
-      // tessedit_pageseg_mode: '6', // Single uniform block of text
-      // tessedit_pageseg_mode: '4', // Assume single column of text
-      // tessjs_create_box: '0',
-      // tessjs_create_hocr: '0',
-      // tessjs_create_tsv: '0',
-      // tessjs_create_unlv: '0',
-      // tessjs_create_osd: '0'
     });
 
     console.log('worker created')
@@ -266,21 +259,39 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
       const maskImg = new Image();
       maskImg.src = invertedMask;
 
-      maskImg.onload = () => {
+      maskImg.onload = async () => {
         // First draw the original image to the temp canvas
         tempCtx.drawImage(img, 0, 0);
 
-        // Apply the mask to the image (only keep parts where mask is not transparent)
+        // Erode the mask
+        const maskImage = await ImageJS.load(maskImg.src);
+        const erodedMask = maskImage.grey().erode({ iterations: 1 }); // Adjust iterations as needed
+
+        // Convert the eroded mask back to a canvas
+        const erodedMaskCanvas = document.createElement('canvas');
+        erodedMaskCanvas.width = erodedMask.width;
+        erodedMaskCanvas.height = erodedMask.height;
+        const erodedMaskCtx = erodedMaskCanvas.getContext('2d');
+        const rgbaData = new Uint8ClampedArray(erodedMask.width * erodedMask.height * 4);
+        for (let i = 0; i < erodedMask.data.length; i++) {
+          const value = erodedMask.data[i] > 0 ? 255 : 0;
+          rgbaData[i * 4] = value;     // R
+          rgbaData[i * 4 + 1] = value; // G
+          rgbaData[i * 4 + 2] = value; // B
+          rgbaData[i * 4 + 3] = value;   // A (fully opaque)
+        }
+        const imageData = new ImageData(rgbaData, erodedMask.width, erodedMask.height);
+        erodedMaskCtx.putImageData(imageData, 0, 0);
+
+        // Apply the mask to the image 
         tempCtx.globalCompositeOperation = 'destination-in';
-        tempCtx.drawImage(maskImg, 0, 0, img.width, img.height);
+        tempCtx.drawImage(erodedMaskCanvas, 0, 0, img.width, img.height);
 
         // Reset composite operation
         tempCtx.globalCompositeOperation = 'source-over';
 
-        // Now draw the masked image onto our white background
         resultCtx.drawImage(tempCanvas, 0, 0);
 
-        // Continue with the subsection extraction
         finishProcessing();
       };
 
@@ -331,6 +342,95 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
   });
 }
 
+// async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, invertedMask) {
+//   return new Promise((mainResolve, mainReject) => {
+//     // Create a canvas for the final result
+//     const resultCanvas = document.createElement('canvas');
+//     resultCanvas.width = img.width;
+//     resultCanvas.height = img.height;
+//     const resultCtx = resultCanvas.getContext('2d');
+
+//     // Step 1: Fill the entire canvas with white (our background)
+//     resultCtx.fillStyle = 'white';
+//     resultCtx.fillRect(0, 0, resultCanvas.width, resultCanvas.height);
+
+//     // If we have a mask, process it
+//     if (invertedMask) {
+//       // Create a temporary canvas to hold the masked image
+//       const tempCanvas = document.createElement('canvas');
+//       tempCanvas.width = img.width;
+//       tempCanvas.height = img.height;
+//       const tempCtx = tempCanvas.getContext('2d');
+
+//       // Load the mask
+//       const maskImg = new Image();
+//       maskImg.src = invertedMask;
+
+//       maskImg.onload = () => {
+//         // First draw the original image to the temp canvas
+//         tempCtx.drawImage(img, 0, 0);
+
+//         // Apply the mask to the image (only keep parts where mask is not transparent)
+//         tempCtx.globalCompositeOperation = 'destination-in';
+//         tempCtx.drawImage(maskImg, 0, 0, img.width, img.height);
+
+//         // Reset composite operation
+//         tempCtx.globalCompositeOperation = 'source-over';
+
+//         // Now draw the masked image onto our white background
+//         resultCtx.drawImage(tempCanvas, 0, 0);
+
+//         // Continue with the subsection extraction
+//         finishProcessing();
+//       };
+
+//       maskImg.onerror = mainReject;
+//     } else {
+//       // If no mask, just draw the original image on white background
+//       resultCtx.drawImage(img, 0, 0);
+//       finishProcessing();
+//     }
+
+//     // Function to extract and process the subsection
+//     function finishProcessing() {
+//       // Extract the subsection
+//       const subsectionCanvas = document.createElement('canvas');
+//       subsectionCanvas.width = targetWidth;
+//       subsectionCanvas.height = targetHeight;
+//       const subsectionCtx = subsectionCanvas.getContext('2d');
+
+//       // Draw and resize the subsection from the result canvas
+//       subsectionCtx.drawImage(
+//         resultCanvas,
+//         x, y, w, h, // Source rectangle
+//         0, 0, targetWidth, targetHeight // Destination rectangle
+//       );
+
+//       // Convert the subsection to black and white
+//       const imageData = subsectionCtx.getImageData(0, 0, targetWidth, targetHeight);
+//       const data = imageData.data;
+//       const threshold = 128; // Set a threshold value (0-255)
+
+//       for (let i = 0; i < data.length; i += 4) {
+//         const grayscale = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; // Convert to grayscale
+//         const value = grayscale > threshold ? 255 : 0; // Apply threshold
+//         data[i] = value;     // Red
+//         data[i + 1] = value; // Green
+//         data[i + 2] = value; // Blue
+//         data[i + 3] = 255;   // Alpha (fully opaque)
+//       }
+
+//       subsectionCtx.putImageData(imageData, 0, 0);
+
+//       // Return the processed image
+//       const subsectionImg = new Image();
+//       subsectionImg.onload = () => mainResolve(subsectionImg);
+//       subsectionImg.onerror = mainReject;
+//       subsectionImg.src = subsectionCanvas.toDataURL();
+//     }
+//   });
+// }
+
 function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalHeight) {
   const protoHeight = maskDims[2];
   const protoWidth = maskDims[3];
@@ -372,99 +472,6 @@ function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalH
 
   return maskCanvas.toDataURL('image/png');
 }
-
-
-// function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalHeight) {
-//   // Extract dimensions from maskDims
-//   const batchSize = maskDims[0];  // Should be 1
-//   const numChannels = maskDims[1]; // Should be 32
-//   const protoHeight = maskDims[2]; // Should be 160
-//   const protoWidth = maskDims[3];  // Should be 160
-
-//   // Create an empty mask with the right dimensions
-//   const mask = new Float32Array(protoHeight * protoWidth).fill(0);
-
-//   // Matrix multiplication: maskCoeffs (32) dot maskProtos (32×160×160)
-//   for (let h = 0; h < protoHeight; h++) {
-//     for (let w = 0; w < protoWidth; w++) {
-//       let val = 0;
-//       const pixelIdx = h * protoWidth + w;
-
-//       // Sum over all channels
-//       for (let c = 0; c < numChannels; c++) {
-//         // Access the right position in the flattened maskProtos array
-//         const protoIdx = c * protoHeight * protoWidth + pixelIdx;
-//         val += maskCoeffs[c] * maskProtos[protoIdx];
-//       }
-
-//       mask[pixelIdx] = val;
-//     }
-//   }
-
-//   // Apply sigmoid activation
-//   const sigmoidMask = mask.map(v => 1 / (1 + Math.exp(-v)));
-
-//   // Threshold to binary with higher threshold for cleaner results
-//   const thresholdValue = 0.05;
-//   const binaryMask = sigmoidMask.map(v => (v > thresholdValue ? 1 : 0));
-
-//   // Create a canvas to hold the mask
-//   const maskCanvas = document.createElement('canvas');
-//   maskCanvas.width = protoWidth;
-//   maskCanvas.height = protoHeight;
-//   const maskCtx = maskCanvas.getContext('2d');
-//   const maskImageData = maskCtx.createImageData(protoWidth, protoHeight);
-
-//   const maskCanvasInv = document.createElement('canvas');
-//   maskCanvasInv.width = protoWidth;
-//   maskCanvasInv.height = protoHeight;
-//   const maskCtxInv = maskCanvasInv.getContext('2d');
-//   const maskImageDataInv = maskCtxInv.createImageData(protoWidth, protoHeight);
-
-//   // Fill the image data - white for mask, transparent for background
-//   for (let i = 0; i < binaryMask.length; i++) {
-//     const value = binaryMask[i] * 255;
-//     // const invValue = (1 - binaryMask[i]) * 255;
-//     const invValue = binaryMask[i] * 255;
-
-//     // Mask
-//     maskImageData.data[i * 4] = value;     // R
-//     maskImageData.data[i * 4 + 1] = value; // G
-//     maskImageData.data[i * 4 + 2] = value; // B
-//     maskImageData.data[i * 4 + 3] = value; // A
-
-//     // Inverted Mask
-//     maskImageDataInv.data[i * 4] = invValue;     // R
-//     maskImageDataInv.data[i * 4 + 1] = invValue; // G
-//     maskImageDataInv.data[i * 4 + 2] = invValue; // B
-//     maskImageDataInv.data[i * 4 + 3] = invValue; // A
-//   }
-
-//   maskCtx.putImageData(maskImageData, 0, 0);
-//   maskCtxInv.putImageData(maskImageDataInv, 0, 0);
-
-//   // Resize to the original image dimensions
-//   const resizedMaskCanvas = document.createElement('canvas');
-//   resizedMaskCanvas.width = originalWidth;
-//   resizedMaskCanvas.height = originalHeight;
-//   const resizedMaskCtx = resizedMaskCanvas.getContext('2d');
-//   resizedMaskCtx.imageSmoothingEnabled = true;
-//   resizedMaskCtx.imageSmoothingQuality = 'high';
-//   resizedMaskCtx.drawImage(maskCanvas, 0, 0, originalWidth, originalHeight);
-
-//   const resizedMaskCanvasInv = document.createElement('canvas');
-//   resizedMaskCanvasInv.width = originalWidth;
-//   resizedMaskCanvasInv.height = originalHeight;
-//   const resizedMaskCtxInv = resizedMaskCanvasInv.getContext('2d');
-//   resizedMaskCtxInv.imageSmoothingEnabled = true;
-//   resizedMaskCtxInv.imageSmoothingQuality = 'high';
-//   resizedMaskCtxInv.drawImage(maskCanvasInv, 0, 0, originalWidth, originalHeight);
-
-//   return {
-//     mask: resizedMaskCanvas.toDataURL('image/png'), // Mask
-//     invertedMask: resizedMaskCanvasInv.toDataURL('image/png') // Inverted Mask
-//   };
-// }
 
 function calculateIoU(box1, box2) {
   const x1 = Math.max(box1.x1, box2.x1);
