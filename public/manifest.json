@@ -9,23 +9,27 @@
     "contextMenus",
     "storage",
     "unlimitedStorage",
-    "offscreen"
+    "offscreen",
+    "commands"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "content.js"
-      ]
+  "commands": {
+    "start-detection": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Start detection"
+    },
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+P",
+        "mac": "MacCtrl+Command+P"
+      }
     }
-  ],
-  "minimum_chrome_version": "109",
+  },
   "action": {
     "default_icon": {
       "16": "icons/icon.png",

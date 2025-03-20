@@ -9,6 +9,17 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('unload', () => {
   cleanupEventListeners();
 });
+
+// Listen for messages from the background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "startDetection") {
+    const detectButton = window.popupElements?.detectButton;
+    if (detectButton) {
+      detectButton.click(); // Simulate a button click to start detection
+    }
+  }
+});
+
 function initializePopup() {
   const imageUploadElement = document.getElementById('imageUpload');
   const detectButton = document.getElementById('detectButton');
@@ -50,6 +61,22 @@ function initializePopup() {
 
   // Detect objects when the button is clicked (using named function for easy removal)
   freshButton.addEventListener('click', handleDetection);
+
+  // Load a default image
+  const defaultImageUrl = 'local_tesseract/test2.png'; // Replace with the actual path to your default image
+  const reader = new FileReader();
+  const defaultImage = new Image();
+  defaultImage.src = defaultImageUrl;
+
+  defaultImage.onload = () => {
+    imagePreviewElement.innerHTML = `<img src="${defaultImageUrl}" id="previewImage">`;
+    window.imageData = defaultImageUrl; // Store the default image data
+    console.log('Default image loaded');
+  };
+
+  defaultImage.onerror = () => {
+    console.error('Failed to load default image');
+  };
 
   console.log('Popup initialized with fresh event listeners');
 }

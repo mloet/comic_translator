@@ -82,3 +82,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command === "open-popup") {
+    // Open the popup (this will focus the popup if already open)
+    chrome.action.openPopup();
+  } else if (command === "start-detection") {
+    // Send a message to the popup to start detection
+    chrome.runtime.sendMessage({ action: "startDetection" });
+  }
+});

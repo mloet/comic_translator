@@ -1,13 +1,12 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import CopyPlugin from 'copy-webpack-plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config = {
-    mode: 'development',
+    mode: 'development', // Automatically sets process.env.NODE_ENV
     devtool: 'inline-source-map',
     entry: {
         background: './src/background.js',
@@ -34,13 +33,12 @@ const config = {
             patterns: [
                 {
                     from: "public",
-                    to: "." // Copies to build folder
+                    to: "."
                 },
                 {
                     from: "src/popup.css",
                     to: "popup.css"
                 },
-                // Add pattern for model files - make sure the path is correct
                 {
                     from: "models",
                     to: "models",
@@ -48,7 +46,6 @@ const config = {
                         ignore: ["**/*.txt", "**/.DS_Store"],
                     }
                 },
-                // Add pattern for Tesseract files
                 {
                     from: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
                     to: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js"
@@ -56,11 +53,14 @@ const config = {
                 {
                     from: "local_tesseract/dist/worker.min.js",
                     to: "local_tesseract/worker.min.js"
+                },
+                {
+                    from: "local_tesseract/test2.png",
+                    to: "local_tesseract/test2.png"
                 }
             ],
         })
     ],
-    // Increase limits for ONNX models which can be large
     performance: {
         hints: false,
         maxEntrypointSize: 10485760, // 10MB
