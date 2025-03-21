@@ -23,6 +23,7 @@
     "axios": "^1.8.3",
     "deepl-node": "^1.17.3",
     "i18next": "^24.2.3",
+    "image-js": "^0.36.0",
     "node-polyfill-webpack-plugin": "^4.1.0",
     "onnxruntime-web": "^1.21.0",
     "tesseract.js": "^6.0.0",

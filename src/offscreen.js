@@ -22,9 +22,8 @@ async function loadModel() {
   }
 }
 
-let tesseract_worker = null;
-
 // Initialize Tesseract worker
+let tesseract_worker = null;
 async function initializeWorker() {
   console.log('creating worker')
   if (!tesseract_worker) {
@@ -36,7 +35,7 @@ async function initializeWorker() {
       workerBlobURL: false
     });
     await tesseract_worker.setParameters({
-      // tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\'":;() ', // Added punctuation and space
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,!?-\'":; ', // Added punctuation and space
       preserve_interword_spaces: '1',
     });
 
@@ -45,6 +44,7 @@ async function initializeWorker() {
   return tesseract_worker;
 }
 
+// Translate text using DeepL API
 async function translateText(text, sourceLang = 'ES', targetLang = 'EN') {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
@@ -94,6 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// Main object detection function
 async function detectObjects(base64Image, requestId) {
   try {
     console.log("Processing image for detection");
@@ -121,8 +122,7 @@ async function detectObjects(base64Image, requestId) {
       results: results,
       requestId: requestId
     });
-    await tesseract_worker.terminate()
-
+    await tesseract_worker.terminate();
 
   } catch (error) {
     console.error("Detection error:", error);
@@ -134,6 +134,9 @@ async function detectObjects(base64Image, requestId) {
   }
 }
 
+// Helper functions
+
+// Convert base64 image to ImageData
 async function base64ToImageData(base64Image) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -151,6 +154,7 @@ async function base64ToImageData(base64Image) {
   });
 }
 
+// Preprocess the image for the model
 function preprocessImage(img) {
   const targetSize = 640;
   const canvas = document.createElement('canvas');
@@ -172,6 +176,7 @@ function preprocessImage(img) {
   return new ort.Tensor('float32', inputTensor, [1, 3, targetSize, targetSize]);
 }
 
+// Postprocess the model output
 async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   const confidenceThreshold = 0.8;
   const iouThreshold = 0.5;
@@ -212,7 +217,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
     const { x1, y1, x2, y2, confidence, mask } = detection
     const w = x2 - x1;
     const h = y2 - y1;
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3, mask);
+    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 4, h * 4, mask);
     // const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3);
     const result = await tesseract_worker.recognize(subsectionImg.src);
 
@@ -235,6 +240,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   return filteredDetections;
 }
 
+// Preprocess speech bubble for OCR
 async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, invertedMask) {
   return new Promise((mainResolve, mainReject) => {
     // Create a canvas for the final result
@@ -265,7 +271,8 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
 
         // Erode the mask
         const maskImage = await ImageJS.load(maskImg.src);
-        const erodedMask = maskImage.grey().erode({ iterations: 1 }); // Adjust iterations as needed
+        const denoisedMask = maskImage.gaussianFilter({ radius: 2 });
+        const erodedMask = denoisedMask.grey().erode({ iterations: 1 }); // Adjust iterations as needed
 
         // Convert the eroded mask back to a canvas
         const erodedMaskCanvas = document.createElement('canvas');
@@ -342,95 +349,7 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
   });
 }
 
-// async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, invertedMask) {
-//   return new Promise((mainResolve, mainReject) => {
-//     // Create a canvas for the final result
-//     const resultCanvas = document.createElement('canvas');
-//     resultCanvas.width = img.width;
-//     resultCanvas.height = img.height;
-//     const resultCtx = resultCanvas.getContext('2d');
-
-//     // Step 1: Fill the entire canvas with white (our background)
-//     resultCtx.fillStyle = 'white';
-//     resultCtx.fillRect(0, 0, resultCanvas.width, resultCanvas.height);
-
-//     // If we have a mask, process it
-//     if (invertedMask) {
-//       // Create a temporary canvas to hold the masked image
-//       const tempCanvas = document.createElement('canvas');
-//       tempCanvas.width = img.width;
-//       tempCanvas.height = img.height;
-//       const tempCtx = tempCanvas.getContext('2d');
-
-//       // Load the mask
-//       const maskImg = new Image();
-//       maskImg.src = invertedMask;
-
-//       maskImg.onload = () => {
-//         // First draw the original image to the temp canvas
-//         tempCtx.drawImage(img, 0, 0);
-
-//         // Apply the mask to the image (only keep parts where mask is not transparent)
-//         tempCtx.globalCompositeOperation = 'destination-in';
-//         tempCtx.drawImage(maskImg, 0, 0, img.width, img.height);
-
-//         // Reset composite operation
-//         tempCtx.globalCompositeOperation = 'source-over';
-
-//         // Now draw the masked image onto our white background
-//         resultCtx.drawImage(tempCanvas, 0, 0);
-
-//         // Continue with the subsection extraction
-//         finishProcessing();
-//       };
-
-//       maskImg.onerror = mainReject;
-//     } else {
-//       // If no mask, just draw the original image on white background
-//       resultCtx.drawImage(img, 0, 0);
-//       finishProcessing();
-//     }
-
-//     // Function to extract and process the subsection
-//     function finishProcessing() {
-//       // Extract the subsection
-//       const subsectionCanvas = document.createElement('canvas');
-//       subsectionCanvas.width = targetWidth;
-//       subsectionCanvas.height = targetHeight;
-//       const subsectionCtx = subsectionCanvas.getContext('2d');
-
-//       // Draw and resize the subsection from the result canvas
-//       subsectionCtx.drawImage(
-//         resultCanvas,
-//         x, y, w, h, // Source rectangle
-//         0, 0, targetWidth, targetHeight // Destination rectangle
-//       );
-
-//       // Convert the subsection to black and white
-//       const imageData = subsectionCtx.getImageData(0, 0, targetWidth, targetHeight);
-//       const data = imageData.data;
-//       const threshold = 128; // Set a threshold value (0-255)
-
-//       for (let i = 0; i < data.length; i += 4) {
-//         const grayscale = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; // Convert to grayscale
-//         const value = grayscale > threshold ? 255 : 0; // Apply threshold
-//         data[i] = value;     // Red
-//         data[i + 1] = value; // Green
-//         data[i + 2] = value; // Blue
-//         data[i + 3] = 255;   // Alpha (fully opaque)
-//       }
-
-//       subsectionCtx.putImageData(imageData, 0, 0);
-
-//       // Return the processed image
-//       const subsectionImg = new Image();
-//       subsectionImg.onload = () => mainResolve(subsectionImg);
-//       subsectionImg.onerror = mainReject;
-//       subsectionImg.src = subsectionCanvas.toDataURL();
-//     }
-//   });
-// }
-
+// Generate a binary mask from the mask coefficients
 function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalHeight) {
   const protoHeight = maskDims[2];
   const protoWidth = maskDims[3];
@@ -452,7 +371,7 @@ function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalH
   }
 
   const sigmoidMask = mask.map(v => 1 / (1 + Math.exp(-v)));
-  const binaryMask = sigmoidMask.map(v => (v > 0.95 ? 1 : 0));
+  const binaryMask = sigmoidMask.map(v => (v > 0.9 ? 1 : 0));
 
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = protoWidth;

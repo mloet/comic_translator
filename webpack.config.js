@@ -40,6 +40,10 @@ const config = {
                     to: "popup.css"
                 },
                 {
+                    from: "src/content-styles.css",
+                    to: "content-styles.css"
+                },
+                {
                     from: "models",
                     to: "models",
                     globOptions: {

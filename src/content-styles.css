@@ -1,0 +1,88 @@
+/* Styles for comic bubble detection overlays */
+
+.comic-bubble-detector-container {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.comic-bubble-detector-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.comic-bubble-detector-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 9999;
+  background: rgba(0, 120, 255, 0.8);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  transition: background-color 0.2s ease;
+}
+
+.comic-bubble-detector-button:hover {
+  background-color: rgba(0, 100, 255, 1);
+}
+
+.comic-bubble-detector-results {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.bubble-text-overlay {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  padding: 5px;
+  box-sizing: border-box;
+  color: black;
+  font-family: 'Comic Sans MS', 'Arial', sans-serif;
+  font-weight: bold;
+  white-space: normal;
+  word-wrap: break-word;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.bubble-text-overlay:hover {
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Animation for processing state */
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.comic-bubble-detector-button.processing {
+  animation: pulse 1.5s infinite;
+  background-color: rgba(200, 100, 0, 0.8);
+}
