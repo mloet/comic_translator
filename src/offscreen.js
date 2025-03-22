@@ -29,7 +29,7 @@ async function initializeWorker() {
   if (!tesseract_worker) {
     console.log('no worker yet')
 
-    tesseract_worker = await Tesseract.createWorker('spa', 1, {
+    tesseract_worker = await Tesseract.createWorker('eng', 1, {
       corePath: 'local_tesseract/tesseract.js-core',
       workerPath: "local_tesseract/worker.min.js",
       workerBlobURL: false
@@ -45,7 +45,7 @@ async function initializeWorker() {
 }
 
 // Translate text using DeepL API
-async function translateText(text, sourceLang = 'ES', targetLang = 'EN') {
+async function translateText(text, sourceLang = 'KOR', targetLang = 'EN') {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
     return text; // Return the original text
@@ -236,7 +236,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
       .replace(/-\s+/g, '')
       .replace(/\s+/g, ' ')
       .toUpperCase();
-    detection.text = await translateText(rawText, 'es', 'en');
+    detection.text = await translateText(rawText, 'KO', 'EN');
   }
 
   return filteredDetections;
