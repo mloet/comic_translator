@@ -5,25 +5,103 @@
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Comic Bubble Detection</title>
-
-  <!-- Load styles -->
+  <title>Comic Bubble Translator</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 
 <body>
   <div class="container">
-    <h1>Comic Bubble Detector</h1>
-    <h2>YOLOv8 Text Bubble Detection</h2>
-    <div class="upload-container">
-      <input type="file" id="imageUpload" accept="image/*">
-      <button id="detectButton">Detect Objects</button>
+    <h1>Comic Bubble Translator</h1>
+
+    <!-- Translation Settings -->
+    <div class="settings-section">
+      <!-- API Key Input -->
+      <div class="api-key-container">
+        <label for="apiKey">DeepL API Key:</label>
+        <div class="api-key-input">
+          <input type="password" id="apiKey" placeholder="Enter your DeepL API key">
+          <button id="saveApiKey" class="small-button">Save</button>
+        </div>
+      </div>
+
+      <!-- Language Selection Section -->
+      <div class="language-selection">
+        <div class="language-dropdown">
+          <label for="sourceLanguage">From:</label>
+          <select id="sourceLanguage">
+            <option value="AUTO">Auto Detect</option>
+            <option value="AR">Arabic</option>
+            <option value="BG">Bulgarian</option>
+            <option value="CS">Czech</option>
+            <option value="DA">Danish</option>
+            <option value="DE">German</option>
+            <option value="EL">Greek</option>
+            <option value="EN">English</option>
+            <option value="ES">Spanish</option>
+            <option value="ET">Estonian</option>
+            <option value="FI">Finnish</option>
+            <option value="FR">French</option>
+            <option value="HU">Hungarian</option>
+            <option value="ID">Indonesian</option>
+            <option value="IT">Italian</option>
+            <option value="JA">Japanese</option>
+            <option value="KO">Korean</option>
+            <option value="LT">Lithuanian</option>
+            <option value="LV">Latvian</option>
+            <option value="NB">Norwegian Bokmål</option>
+            <option value="NL">Dutch</option>
+            <option value="PL">Polish</option>
+            <option value="PT">Portuguese</option>
+            <option value="RO">Romanian</option>
+            <option value="RU">Russian</option>
+            <option value="SK">Slovak</option>
+            <option value="SL">Slovenian</option>
+            <option value="SV">Swedish</option>
+            <option value="TR">Turkish</option>
+            <option value="UK">Ukrainian</option>
+            <option value="ZH">Chinese</option>
+          </select>
+        </div>
+
+        <div class="language-dropdown">
+          <label for="targetLanguage">To:</label>
+          <select id="targetLanguage">
+            <option value="AR">Arabic</option>
+            <option value="BG">Bulgarian</option>
+            <option value="CS">Czech</option>
+            <option value="DA">Danish</option>
+            <option value="DE">German</option>
+            <option value="EL">Greek</option>
+            <option value="EN" selected>English</option>
+            <option value="ES">Spanish</option>
+            <option value="ET">Estonian</option>
+            <option value="FI">Finnish</option>
+            <option value="FR">French</option>
+            <option value="HU">Hungarian</option>
+            <option value="ID">Indonesian</option>
+            <option value="IT">Italian</option>
+            <option value="JA">Japanese</option>
+            <option value="KO">Korean</option>
+            <option value="LT">Lithuanian</option>
+            <option value="LV">Latvian</option>
+            <option value="NB">Norwegian Bokmål</option>
+            <option value="NL">Dutch</option>
+            <option value="PL">Polish</option>
+            <option value="PT">Portuguese</option>
+            <option value="RO">Romanian</option>
+            <option value="RU">Russian</option>
+            <option value="SK">Slovak</option>
+            <option value="SL">Slovenian</option>
+            <option value="SV">Swedish</option>
+            <option value="TR">Turkish</option>
+            <option value="UK">Ukrainian</option>
+            <option value="ZH">Chinese</option>
+          </select>
+        </div>
+      </div>
     </div>
-    <div id="imagePreview" class="image-preview"></div>
-    <div id="subsectionImages" class="subsection-images"></div> <!-- New container for subsection images -->
-    <div id="results" class="results">
-      <pre id="output"></pre>
-    </div>
+
+    <div id="status" class="status-message"></div>
   </div>
   <script src="popup.js"></script>
 </body>

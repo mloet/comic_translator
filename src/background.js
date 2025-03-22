@@ -207,3 +207,65 @@ chrome.commands.onCommand.addListener((command) => {
     });
   }
 });
+
+// Add this to your background.js file to handle translation settings
+
+// Storage for translation settings
+let translationSettings = {
+  apiKey: '',
+  sourceLanguage: 'AUTO',
+  targetLanguage: 'EN'
+};
+
+// Load saved settings when background script starts
+chrome.storage.sync.get(['apiKey', 'sourceLanguage', 'targetLanguage'], function (items) {
+  if (items.apiKey) translationSettings.apiKey = items.apiKey;
+  if (items.sourceLanguage) translationSettings.sourceLanguage = items.sourceLanguage;
+  if (items.targetLanguage) translationSettings.targetLanguage = items.targetLanguage;
+});
+
+// Add this to your existing onMessage listener in background.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle settings updates from popup
+  if (message.action === "updateTranslationSettings") {
+    // Update settings
+    if (message.settings.apiKey !== undefined) {
+      translationSettings.apiKey = message.settings.apiKey;
+    }
+    if (message.settings.sourceLanguage !== undefined) {
+      translationSettings.sourceLanguage = message.settings.sourceLanguage;
+    }
+    if (message.settings.targetLanguage !== undefined) {
+      translationSettings.targetLanguage = message.settings.targetLanguage;
+    }
+
+    console.log('Translation settings updated:', translationSettings);
+
+    // Forward settings to offscreen document
+    chrome.runtime.sendMessage({
+      action: "updateTranslationSettings",
+      settings: translationSettings
+    }).catch(error => {
+      console.error('Error forwarding settings to offscreen document:', error);
+    });
+
+    return false;
+  }
+
+  // Modify the existing processDetectionRequest function to include translation settings
+  // When forwarding detection requests to offscreen.js, include the current settings
+  if (message.action === "initDetection" || message.action === "initWebpageDetection") {
+    // Include translation settings with the request
+    message.translationSettings = translationSettings;
+  }
+});
+
+chrome.runtime.onStartup.addListener(async () => {
+  console.log("Extension started, ensuring offscreen document is created...");
+  const offscreenReady = await ensureOffscreenDocument();
+  if (offscreenReady) {
+    console.log("Offscreen document is ready.");
+  } else {
+    console.error("Failed to create offscreen document on startup.");
+  }
+});

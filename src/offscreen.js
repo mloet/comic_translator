@@ -2,7 +2,6 @@ import * as ort from "onnxruntime-web";
 import Tesseract from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
-const authKey = "a011d0fc-a730-4ab9-b682-526495ade881:fx";
 const MODEL_PATH = chrome.runtime.getURL("models/bubble_seg.onnx");
 
 // Load the ONNX model
@@ -22,36 +21,97 @@ async function loadModel() {
   }
 }
 
+const languageMapping = {
+  // DeepL language code -> Tesseract language code
+  'AUTO': 'eng', // Default to English for auto-detect
+  'AR': 'ara',
+  'BG': 'bul',
+  'CS': 'ces',
+  'DA': 'dan',
+  'DE': 'deu',
+  'EL': 'ell',
+  'EN': 'eng',
+  'ES': 'spa',
+  'ET': 'est',
+  'FI': 'fin',
+  'FR': 'fra',
+  'HU': 'hun',
+  'ID': 'ind',
+  'IT': 'ita',
+  'JA': 'jpn',
+  'KO': 'kor',
+  'LT': 'lit',
+  'LV': 'lav',
+  'NB': 'nor',
+  'NL': 'nld',
+  'PL': 'pol',
+  'PT': 'por',
+  'RO': 'ron',
+  'RU': 'rus',
+  'SK': 'slk',
+  'SL': 'slv',
+  'SV': 'swe',
+  'TR': 'tur',
+  'UK': 'ukr',
+  'ZH': 'chi_sim'
+};
+
 // Initialize Tesseract worker
 let tesseract_worker = null;
-async function initializeWorker() {
-  console.log('creating worker')
-  if (!tesseract_worker) {
-    console.log('no worker yet')
-
-    tesseract_worker = await Tesseract.createWorker('eng', 1, {
-      corePath: 'local_tesseract/tesseract.js-core',
-      workerPath: "local_tesseract/worker.min.js",
-      workerBlobURL: false
-    });
-    await tesseract_worker.setParameters({
-      // tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,!?-\'":; ', // Added punctuation and space
-      preserve_interword_spaces: '1',
-    });
-
-    console.log('worker created')
+async function initializeWorker(lang = 'eng') {
+  if (tesseract_worker) {
+    // If worker exists with a different language, terminate it
+    const currentLanguage = tesseract_worker.lang;
+    if (currentLanguage !== lang) {
+      console.log(`Switching Tesseract language from ${currentLanguage} to ${lang}`);
+      await tesseract_worker.terminate();
+      tesseract_worker = null;
+    } else {
+      return tesseract_worker; // Return existing worker if language is the same
+    }
   }
+
+  console.log('Creating Tesseract worker with language:', lang);
+
+  tesseract_worker = await Tesseract.createWorker(lang, 1, {
+    corePath: 'local_tesseract/tesseract.js-core',
+    workerPath: "local_tesseract/worker.min.js",
+    workerBlobURL: false
+  });
+
+  await tesseract_worker.setParameters({
+    preserve_interword_spaces: '1',
+  });
+
+  console.log('Tesseract worker created with language:', lang);
   return tesseract_worker;
 }
 
-// Translate text using DeepL API
-async function translateText(text, sourceLang = 'KOR', targetLang = 'EN') {
+// Global translation settings
+let translationSettings = {
+  apiKey: '',
+  sourceLanguage: 'AUTO',
+  targetLanguage: 'EN'
+};
+
+async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
     return text; // Return the original text
   }
 
-  console.log('Translation request payload:', {
+  // Use provided languages or fall back to global settings
+  const sourceLang = forcedSourceLang || translationSettings.sourceLanguage;
+  const targetLang = forcedTargetLang || translationSettings.targetLanguage;
+  const apiKey = translationSettings.apiKey;
+
+  // Skip translation if API key is missing or languages are the same
+  if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
+    console.log('Translation skipped: missing API key or same language');
+    return text;
+  }
+
+  console.log('Translation request:', {
     text,
     sourceLang,
     targetLang,
@@ -64,9 +124,9 @@ async function translateText(text, sourceLang = 'KOR', targetLang = 'EN') {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
-        auth_key: authKey, // Replace with your DeepL API key
+        auth_key: apiKey,
         text: text,
-        source_lang: sourceLang.toUpperCase(),
+        source_lang: sourceLang === 'AUTO' ? '' : sourceLang.toUpperCase(),
         target_lang: targetLang.toUpperCase(),
       }),
     });
@@ -87,9 +147,25 @@ async function translateText(text, sourceLang = 'KOR', targetLang = 'EN') {
 if (!window.listenerRegistered) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("Offscreen received message:", message.action);
+
     if (message.action === "detectObjects") {
+      // Check if translation settings are included
+      if (message.translationSettings) {
+        translationSettings = message.translationSettings;
+        console.log("Updated translation settings:", translationSettings);
+      }
       detectObjects(message.imageData, message.requestId);
     }
+
+    if (message.action === "updateTranslationSettings") {
+      translationSettings = message.settings;
+      console.log("Updated translation settings:", translationSettings);
+
+      // If source language changed, we might need to reinitialize worker
+      // Note: we don't do this immediately, but it will happen at next detection
+      console.log("Source language set to:", translationSettings.sourceLanguage);
+    }
+
     return false;
   });
   window.listenerRegistered = true;
@@ -102,7 +178,13 @@ async function detectObjects(base64Image, requestId) {
 
     // Load model if needed
     await loadModel();
-    const tesseract_worker = await initializeWorker();
+
+    // Get Tesseract language based on source language setting
+    const tesseractLang = languageMapping[translationSettings.sourceLanguage] || 'eng';
+    console.log(`Using Tesseract language: ${tesseractLang} for source language: ${translationSettings.sourceLanguage}`);
+
+    // Initialize worker with the proper language
+    const tesseract_worker = await initializeWorker(tesseractLang);
 
     // Convert base64 to image data
     const { imageData, width, height, img } = await base64ToImageData(base64Image);
@@ -114,7 +196,7 @@ async function detectObjects(base64Image, requestId) {
     const outputs = await session.run({ images: inputTensor });
 
     // Process results
-    const results = await postprocessOutput(outputs, width, height, img);
+    const results = await postprocessOutput(outputs, width, height, img, tesseractLang);
     console.log(`Found ${results.length} detections`);
 
     // Send results back
@@ -123,7 +205,6 @@ async function detectObjects(base64Image, requestId) {
       results: results,
       requestId: requestId
     });
-    // await tesseract_worker.terminate();
 
   } catch (error) {
     console.error("Detection error:", error);
@@ -178,7 +259,7 @@ function preprocessImage(img) {
 }
 
 // Postprocess the model output
-async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
+async function postprocessOutput(outputs, originalWidth, originalHeight, img, tesseractLang) {
   const confidenceThreshold = 0.8;
   const iouThreshold = 0.5;
   const outputData = outputs.output0.data;
@@ -213,30 +294,39 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   }
 
   const filteredDetections = nonMaxSuppression(detections, iouThreshold);
-  // const tesseract_worker = await initializeWorker();
+
   for (const detection of filteredDetections) {
-    const { x1, y1, x2, y2, confidence, mask } = detection
+    const { x1, y1, x2, y2, confidence, mask } = detection;
     const w = x2 - x1;
     const h = y2 - y1;
     const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 5, h * 5, mask);
-    // const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3);
     const result = await tesseract_worker.recognize(subsectionImg.src);
 
-    console.log(result.data);
+    // console.log(result.data);
 
     detection.subsectionImg = subsectionImg.src;
-    // detection.text = result.data.text
-    //   .trim()
-    //   .replace(/-\s+/g, '')
-    //   .replace(/\s+/g, ' ');
-
-    // Translate the text to English
-    const rawText = result.data.text
+    detection.text = result.data.text
       .trim()
       .replace(/-\s+/g, '')
       .replace(/\s+/g, ' ')
       .toUpperCase();
-    detection.text = await translateText(rawText, 'KO', 'EN');
+
+    // Only attempt translation if we have text and a valid API key
+    if (detection.text && detection.text.trim() !== '' && translationSettings.apiKey) {
+      try {
+        detection.translatedText = await translateText(
+          detection.text,
+          translationSettings.sourceLanguage,
+          translationSettings.targetLanguage
+        );
+        console.log(`Translation: "${detection.text}" => "${detection.translatedText}"`);
+      } catch (error) {
+        console.error('Error translating text:', error);
+        detection.translatedText = detection.text; // Fallback to original text
+      }
+    } else {
+      detection.translatedText = detection.text; // Just copy the original text
+    }
   }
 
   return filteredDetections;

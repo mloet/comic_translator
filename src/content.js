@@ -412,7 +412,7 @@ function handleDetectionResults(imageId, results, error) {
 
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-  const { x1, y1, x2, y2, confidence, mask, text } = detection;
+  const { x1, y1, x2, y2, confidence, mask, text, translatedText } = detection;
 
   // Skip invalid detections
   if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
@@ -461,7 +461,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   }
 
   // Add text overlay if text is available
-  if (text && text.trim()) {
+  if (translatedText && translatedText.trim()) {
     const textDiv = document.createElement('div');
     textDiv.className = 'bubble-text-overlay';
     textDiv.style.position = 'absolute';
@@ -485,7 +485,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
     textDiv.style.pointerEvents = 'auto';
     textDiv.style.cursor = 'pointer';
     textDiv.style.zIndex = '2'; // Ensure text is above the mask
-    textDiv.textContent = text.trim();
+    textDiv.textContent = translatedText.trim();
 
     // Add edit functionality
     textDiv.title = 'Click to edit text';
