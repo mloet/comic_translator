@@ -4,3 +4,4 @@ test/
 models/
 package-lock.json
 local_tesseract/
+temp/

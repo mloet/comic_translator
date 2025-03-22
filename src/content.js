@@ -7,7 +7,6 @@ let observer = null;
 
 // Initialize when the page is fully loaded
 document.addEventListener('DOMContentLoaded', () => {
-  // Small delay to ensure all images are loaded
   setTimeout(initializeImageDetection, 500);
 });
 
@@ -94,6 +93,7 @@ function addDetectionButton(img) {
   // Create wrapper element
   const wrapper = document.createElement('div');
   wrapper.className = 'comic-bubble-detector-wrapper';
+  wrapper.style.position = 'relative'; // Ensure relative positioning for the button
 
   // Create button
   const button = document.createElement('button');
@@ -101,10 +101,18 @@ function addDetectionButton(img) {
   button.textContent = '🔍';
   button.title = 'Detect comic bubbles';
 
+  // Position the button at the top-left
+  button.style.position = 'absolute';
+  button.style.top = '0';
+  button.style.left = '0';
+  button.style.zIndex = '10'; // Ensure it appears above the image
+  button.style.pointerEvents = 'auto'; // Allow clicks on the button
+
   // Create results container
   const resultsContainer = document.createElement('div');
   resultsContainer.className = 'comic-bubble-detector-results';
   resultsContainer.style.display = 'none';
+  resultsContainer.style.pointerEvents = 'none'; // Prevent clicks on the results container
 
   // Insert wrapper before the image in DOM
   try {
@@ -128,7 +136,8 @@ function addDetectionButton(img) {
       };
 
       // Add click handler
-      button.addEventListener('click', () => {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation(); // Prevent click from affecting underlying elements
         if (resultsContainer.childNodes.length > 0) {
           // Toggle visibility if results already exist
           resultsContainer.style.display =
@@ -431,7 +440,8 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
       maskCanvas.style.position = 'absolute';
       maskCanvas.style.left = '0';
       maskCanvas.style.top = '0';
-      maskCanvas.style.pointerEvents = 'none';
+      maskCanvas.style.pointerEvents = 'none'; // Prevent interaction with the mask
+      maskCanvas.style.zIndex = '1'; // Ensure mask is below the text
 
       const maskCtx = maskCanvas.getContext('2d');
 
@@ -441,10 +451,10 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
       maskCtx.clip();
 
       // Draw mask with transparency
-      maskCtx.globalAlpha = 0.5;
+      maskCtx.globalAlpha = 1;
       maskCtx.drawImage(maskImg, 0, 0, imgWidth, imgHeight);
 
-      container.appendChild(maskCanvas);
+      container.appendChild(maskCanvas); // Append the mask first
     };
 
     maskImg.src = mask;
@@ -467,13 +477,14 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
     textDiv.style.padding = '5px';
     textDiv.style.boxSizing = 'border-box';
     textDiv.style.color = 'black';
-    textDiv.style.fontFamily = 'Comic Sans MS, Arial, sans-serif';
-    textDiv.style.fontSize = `${Math.max(10, Math.min(16, boxHeight / 5))}px`;
+    textDiv.style.fontFamily = 'CC Wild Words, Comic Sans MS, Arial, sans-serif';
+    textDiv.style.fontSize = `5px`;
     textDiv.style.fontWeight = 'bold';
     textDiv.style.whiteSpace = 'normal';
     textDiv.style.wordWrap = 'break-word';
     textDiv.style.pointerEvents = 'auto';
     textDiv.style.cursor = 'pointer';
+    textDiv.style.zIndex = '2'; // Ensure text is above the mask
     textDiv.textContent = text.trim();
 
     // Add edit functionality
@@ -486,7 +497,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
       }
     });
 
-    container.appendChild(textDiv);
+    container.appendChild(textDiv); // Append the text overlay after the mask
   }
 }
 

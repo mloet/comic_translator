@@ -122,13 +122,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Process detection request by forwarding to offscreen document
 async function processDetectionRequest(imageData, requestId) {
   try {
-    // Ensure offscreen document exists
     const offscreenReady = await ensureOffscreenDocument();
 
     if (!offscreenReady) {
       handleDetectionError(requestId, "Failed to create offscreen document");
       return;
     }
+
+    console.log(`Forwarding detection request to offscreen document for request ${requestId}`);
 
     // Forward the request to the offscreen document
     chrome.runtime.sendMessage({

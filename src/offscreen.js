@@ -29,13 +29,13 @@ async function initializeWorker() {
   if (!tesseract_worker) {
     console.log('no worker yet')
 
-    tesseract_worker = await Tesseract.createWorker('eng', 1, {
+    tesseract_worker = await Tesseract.createWorker('spa', 1, {
       corePath: 'local_tesseract/tesseract.js-core',
       workerPath: "local_tesseract/worker.min.js",
       workerBlobURL: false
     });
     await tesseract_worker.setParameters({
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,!?-\'":; ', // Added punctuation and space
+      // tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,!?-\'":; ', // Added punctuation and space
       preserve_interword_spaces: '1',
     });
 
@@ -84,15 +84,16 @@ async function translateText(text, sourceLang = 'ES', targetLang = 'EN') {
 }
 
 // Listen for messages from the background script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("Offscreen received message:", message.action);
-
-  if (message.action === "detectObjects") {
-    detectObjects(message.imageData, message.requestId);
-  }
-
-  return false;
-});
+if (!window.listenerRegistered) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("Offscreen received message:", message.action);
+    if (message.action === "detectObjects") {
+      detectObjects(message.imageData, message.requestId);
+    }
+    return false;
+  });
+  window.listenerRegistered = true;
+}
 
 // Main object detection function
 async function detectObjects(base64Image, requestId) {
@@ -122,7 +123,7 @@ async function detectObjects(base64Image, requestId) {
       results: results,
       requestId: requestId
     });
-    await tesseract_worker.terminate();
+    // await tesseract_worker.terminate();
 
   } catch (error) {
     console.error("Detection error:", error);
@@ -212,29 +213,30 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   }
 
   const filteredDetections = nonMaxSuppression(detections, iouThreshold);
-  const tesseract_worker = await initializeWorker();
+  // const tesseract_worker = await initializeWorker();
   for (const detection of filteredDetections) {
     const { x1, y1, x2, y2, confidence, mask } = detection
     const w = x2 - x1;
     const h = y2 - y1;
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 4, h * 4, mask);
+    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 5, h * 5, mask);
     // const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3);
     const result = await tesseract_worker.recognize(subsectionImg.src);
 
     console.log(result.data);
 
     detection.subsectionImg = subsectionImg.src;
-    detection.text = result.data.text
-      .trim()
-      .replace(/-\s+/g, '')
-      .replace(/\s+/g, ' ');
-
-    // Translate the text to English
-    // const rawText = result.data.text
+    // detection.text = result.data.text
     //   .trim()
     //   .replace(/-\s+/g, '')
     //   .replace(/\s+/g, ' ');
-    // detection.text = await translateText(rawText, 'es', 'en');
+
+    // Translate the text to English
+    const rawText = result.data.text
+      .trim()
+      .replace(/-\s+/g, '')
+      .replace(/\s+/g, ' ')
+      .toUpperCase();
+    detection.text = await translateText(rawText, 'es', 'en');
   }
 
   return filteredDetections;
