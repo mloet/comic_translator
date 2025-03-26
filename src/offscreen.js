@@ -3,6 +3,8 @@ import Tesseract from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
 const MODEL_PATH = chrome.runtime.getURL("models/bubble_seg.onnx");
+const maskConfidence = 0.9;
+const bubbleConfidence = 0.5;
 
 // Load the ONNX model
 let session = null;
@@ -260,7 +262,7 @@ function preprocessImage(img) {
 
 // Postprocess the model output
 async function postprocessOutput(outputs, originalWidth, originalHeight, img, tesseractLang) {
-  const confidenceThreshold = 0.8;
+  const confidenceThreshold = bubbleConfidence;
   const iouThreshold = 0.5;
   const outputData = outputs.output0.data;
   const outputDims = outputs.output0.dims;
@@ -463,7 +465,7 @@ function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalH
   }
 
   const sigmoidMask = mask.map(v => 1 / (1 + Math.exp(-v)));
-  const binaryMask = sigmoidMask.map(v => (v > 0.9 ? 1 : 0));
+  const binaryMask = sigmoidMask.map(v => (v > maskConfidence ? 1 : 0));
 
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = protoWidth;
