@@ -430,38 +430,28 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   const boxWidth = scaledX2 - scaledX1;
   const boxHeight = scaledY2 - scaledY1;
 
-  // Add mask if available
-  if (mask) {
-    const maskImg = new Image();
-    maskImg.onload = () => {
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = imgWidth;
-      maskCanvas.height = imgHeight;
-      maskCanvas.style.position = 'absolute';
-      maskCanvas.style.left = '0';
-      maskCanvas.style.top = '0';
-      maskCanvas.style.pointerEvents = 'none'; // Prevent interaction with the mask
-      maskCanvas.style.zIndex = '1'; // Ensure mask is below the text
-
-      const maskCtx = maskCanvas.getContext('2d');
-
-      // Clip to bounding box
-      maskCtx.beginPath();
-      maskCtx.rect(scaledX1, scaledY1, boxWidth, boxHeight);
-      maskCtx.clip();
-
-      // Draw mask with transparency
-      maskCtx.globalAlpha = 1;
-      maskCtx.drawImage(maskImg, 0, 0, imgWidth, imgHeight);
-
-      container.appendChild(maskCanvas); // Append the mask first
-    };
-
-    maskImg.src = mask;
-  }
-
   // Add text overlay if text is available
   if (translatedText && translatedText.trim()) {
+    console.log(`Adding text overlay: ${translatedText}`);
+    // Create a white background rectangle with fading edges
+    const backgroundDiv = document.createElement('div');
+    backgroundDiv.style.position = 'absolute';
+    backgroundDiv.style.left = `${scaledX1}px`;
+    backgroundDiv.style.top = `${scaledY1}px`;
+    backgroundDiv.style.width = `${boxWidth}px`;
+    backgroundDiv.style.height = `${boxHeight}px`;
+
+    // Add a gradient to fade out at the edges and corners
+    backgroundDiv.style.background = `
+  radial-gradient(circle, rgba(255, 255, 255, 1) 80%, rgba(255, 255, 255, 0) 100%)
+`;
+    backgroundDiv.style.pointerEvents = 'none'; // Prevent interaction with the background
+    backgroundDiv.style.zIndex = '2'; // Ensure it appears below the text
+
+    container.appendChild(backgroundDiv);
+
+
+    // Create the text overlay
     const textDiv = document.createElement('div');
     textDiv.className = 'bubble-text-overlay';
     textDiv.style.position = 'absolute';
@@ -478,14 +468,17 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
     textDiv.style.boxSizing = 'border-box';
     textDiv.style.color = 'black';
     textDiv.style.fontFamily = 'CC Wild Words, Comic Sans MS, Arial, sans-serif';
-    textDiv.style.fontSize = `5px`;
+    textDiv.style.fontSize = `6px`;
     textDiv.style.fontWeight = 'bold';
     textDiv.style.whiteSpace = 'normal';
     textDiv.style.wordWrap = 'break-word';
+    textDiv.style.textJustify = 'inter-word';
+    textDiv.style.hyphens = 'auto';
+    textDiv.style.textWrap = 'balance'; // Modern property to balance text
     textDiv.style.pointerEvents = 'auto';
     textDiv.style.cursor = 'pointer';
-    textDiv.style.zIndex = '2'; // Ensure text is above the mask
-    textDiv.textContent = translatedText.trim();
+    textDiv.style.zIndex = '3'; // Ensure text is above the background
+    textDiv.textContent = translatedText;
 
     // Add edit functionality
     textDiv.title = 'Click to edit text';
@@ -497,7 +490,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
       }
     });
 
-    container.appendChild(textDiv); // Append the text overlay after the mask
+    container.appendChild(textDiv); // Append the text overlay after the background
   }
 }
 
@@ -591,3 +584,4 @@ function setupMutationObserver() {
     subtree: true
   });
 }
+

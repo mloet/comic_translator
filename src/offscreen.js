@@ -2,9 +2,9 @@ import * as ort from "onnxruntime-web";
 import Tesseract from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
-const MODEL_PATH = chrome.runtime.getURL("models/bubble_seg.onnx");
+const MODEL_PATH = chrome.runtime.getURL("models/comic_text_bubble_detector.onnx");
 const maskConfidence = 0.9;
-const bubbleConfidence = 0.5;
+const bubbleConfidence = 0.8;
 
 // Load the ONNX model
 let session = null;
@@ -77,12 +77,20 @@ async function initializeWorker(lang = 'eng') {
 
   tesseract_worker = await Tesseract.createWorker(lang, 1, {
     corePath: 'local_tesseract/tesseract.js-core',
-    workerPath: "local_tesseract/worker.min.js",
+    workerPath: 'local_tesseract/worker.min.js',
     workerBlobURL: false
   });
 
   await tesseract_worker.setParameters({
+    tessedit_create_boxfile: '1', // Enable BOX output
     preserve_interword_spaces: '1',
+    tessedit_char_blacklist: '#$%&\'<=>@[\\]^_`{|}~0123456789',
+    textord_show_boxes: '1',
+    textord_heavy_nr: '1',  // Heavy noise removal
+    tessedit_enable_dict_correction: '1',        // Enable dictionary correction
+    language_model_penalty_non_dict_word: '0.8', // Penalize non-dictionary words
+    tessedit_minimal_confidence_threshold: '60',
+    psm: 6
   });
 
   console.log('Tesseract worker created with language:', lang);
@@ -186,7 +194,7 @@ async function detectObjects(base64Image, requestId) {
     console.log(`Using Tesseract language: ${tesseractLang} for source language: ${translationSettings.sourceLanguage}`);
 
     // Initialize worker with the proper language
-    const tesseract_worker = await initializeWorker(tesseractLang);
+    tesseract_worker = await initializeWorker(tesseractLang);
 
     // Convert base64 to image data
     const { imageData, width, height, img } = await base64ToImageData(base64Image);
@@ -194,8 +202,10 @@ async function detectObjects(base64Image, requestId) {
     // Preprocess image
     const inputTensor = preprocessImage(img);
 
+    // console.log(inputTensor)
     // Run inference
-    const outputs = await session.run({ images: inputTensor });
+    const outputs = await session.run({ pixel_values: inputTensor });
+    // console.log(outputs);
 
     // Process results
     const results = await postprocessOutput(outputs, width, height, img, tesseractLang);
@@ -240,206 +250,165 @@ async function base64ToImageData(base64Image) {
 
 // Preprocess the image for the model
 function preprocessImage(img) {
-  const targetSize = 640;
-  const canvas = document.createElement('canvas');
-  canvas.width = targetSize;
-  canvas.height = targetSize;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, targetSize, targetSize);
+  const targetWidth = 640;
+  const targetHeight = 640;
 
-  const imageData = ctx.getImageData(0, 0, targetSize, targetSize);
+  // Create a canvas to resize the image
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+  // Get image data
+  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
   const data = imageData.data;
-  const inputTensor = new Float32Array(3 * targetSize * targetSize);
+
+  // Preprocessing parameters from preprocessor_config.json
+  const imageMean = [0.485, 0.456, 0.406];
+  const imageStd = [0.229, 0.224, 0.225];
+  const rescaleFactor = 1 / 255.0;
+
+  // Create a Float32Array for the input tensor
+  const inputTensor = new Float32Array(3 * targetWidth * targetHeight);
 
   for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    inputTensor[j] = data[i] / 255.0;      // Red
-    inputTensor[j + targetSize * targetSize] = data[i + 1] / 255.0;  // Green
-    inputTensor[j + 2 * targetSize * targetSize] = data[i + 2] / 255.0;  // Blue
+    // Normalize and rescale pixel values
+    const r = data[i] * rescaleFactor;
+    const g = data[i + 1] * rescaleFactor;
+    const b = data[i + 2] * rescaleFactor;
+
+    inputTensor[j] = (r - imageMean[0]) / imageStd[0]; // Red channel
+    inputTensor[j + targetWidth * targetHeight] = (g - imageMean[1]) / imageStd[1]; // Green channel
+    inputTensor[j + 2 * targetWidth * targetHeight] = (b - imageMean[2]) / imageStd[2]; // Blue channel
   }
 
-  return new ort.Tensor('float32', inputTensor, [1, 3, targetSize, targetSize]);
+  return new ort.Tensor('float32', inputTensor, [1, 3, targetHeight, targetWidth]);
 }
 
-// Postprocess the model output
-async function postprocessOutput(outputs, originalWidth, originalHeight, img, tesseractLang) {
-  const confidenceThreshold = bubbleConfidence;
-  const iouThreshold = 0.5;
-  const outputData = outputs.output0.data;
-  const outputDims = outputs.output0.dims;
-  const maskProtos = outputs.output1.data;
-  const maskDims = outputs.output1.dims;
+const id2label = {
+  0: "bubble",
+  1: "text_bubble",
+  2: "text_free",
+};
 
-  let detections = [];
+async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
+  // console.log(outputs);
+  const logits = outputs.logits.data; // Classification logits
+  const predBoxes = outputs.pred_boxes.data; // Bounding box predictions
+  // console.log(logits);
+  // console.log(predBoxes);
+  const numQueries = outputs.logits.dims[1]; // Number of object queries
+  const numClasses = outputs.logits.dims[2]; // Number of classes (bubble, text_bubble, text_free)
+  // console.log(numQueries, numClasses);
+  const detections = [];
 
-  for (let i = 0; i < outputDims[2]; i += 1) {
-    const cx = outputData[i + outputDims[2] * 0];
-    const cy = outputData[i + outputDims[2] * 1];
-    const w = outputData[i + outputDims[2] * 2];
-    const h = outputData[i + outputDims[2] * 3];
-    const confidence = outputData[i + outputDims[2] * 4];
+  for (let i = 0; i < numQueries; i++) {
+    // Extract class scores and bounding box
+    const classScores = logits.slice(i * numClasses, (i + 1) * numClasses);
+    const bbox = predBoxes.slice(i * 4, (i + 1) * 4);
 
-    if (confidence < confidenceThreshold) continue;
+    // Find the class with the highest score
+    const maxScore = Math.max(...classScores);
+    const classIndex = classScores.indexOf(maxScore);
 
-    const x1 = (cx - w / 2) * (originalWidth / 640);
-    const y1 = (cy - h / 2) * (originalHeight / 640);
-    const x2 = (cx + w / 2) * (originalWidth / 640);
-    const y2 = (cy + h / 2) * (originalHeight / 640);
+    // Filter out low-confidence detections
+    if (maxScore < bubbleConfidence || classIndex === 0) continue;
 
-    const maskCoeffs = [];
-    for (let j = 5; j < outputDims[1]; j++) {
-      maskCoeffs.push(outputData[i + outputDims[2] * j]);
-    }
+    // Convert bounding box from normalized [cx, cy, w, h] to [x1, y1, x2, y2]
+    const cx = bbox[0] * originalWidth;
+    const cy = bbox[1] * originalHeight;
+    const w = bbox[2] * originalWidth;
+    const h = bbox[3] * originalHeight;
+    const x1 = cx - w / 2;
+    const y1 = cy - h / 2;
+    const x2 = cx + w / 2;
+    const y2 = cy + h / 2;
 
-    const mask = generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalHeight);
-
-    detections.push({ x1, y1, x2, y2, confidence, mask });
+    detections.push({
+      x1,
+      y1,
+      x2,
+      y2,
+      confidence: maxScore,
+      classIndex,
+      classLabel: id2label[classIndex],
+    });
   }
 
-  const filteredDetections = nonMaxSuppression(detections, iouThreshold);
+  // Perform non-max suppression to filter overlapping boxes
+  const filteredDetections = nonMaxSuppression(detections, 0.5);
+  console.log(tesseract_worker);
 
+  // Perform OCR on the detected regions
   for (const detection of filteredDetections) {
-    const { x1, y1, x2, y2, confidence, mask } = detection;
+    const { x1, y1, x2, y2 } = detection;
     const w = x2 - x1;
     const h = y2 - y1;
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 5, h * 5, mask);
-    const result = await tesseract_worker.recognize(subsectionImg.src);
 
-    // console.log(result.data);
+    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3);
 
-    detection.subsectionImg = subsectionImg.src;
-    detection.text = result.data.text
-      .trim()
-      .replace(/-\s+/g, '')
-      .replace(/\s+/g, ' ')
-      .toUpperCase();
-
-    // Only attempt translation if we have text and a valid API key
-    if (detection.text && detection.text.trim() !== '' && translationSettings.apiKey) {
-      try {
-        detection.translatedText = await translateText(
-          detection.text,
-          translationSettings.sourceLanguage,
-          translationSettings.targetLanguage
-        );
-        console.log(`Translation: "${detection.text}" => "${detection.translatedText}"`);
-      } catch (error) {
-        console.error('Error translating text:', error);
-        detection.translatedText = detection.text; // Fallback to original text
-      }
-    } else {
-      detection.translatedText = detection.text; // Just copy the original text
+    try {
+      const result = await tesseract_worker.recognize(subsectionImg.src);
+      detection.text = result.data.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
+      console.log(result.data);
+    } catch (error) {
+      console.error('Error recognizing text:', error);
+      detection.text = ''; // Fallback to empty text
+      continue;
     }
+
+    // console.log(detection.text);
+    detection.translatedText = detection.text;
   }
 
   return filteredDetections;
 }
+async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, classIndex) {
+  // Load the image using ImageJS
+  const image = await ImageJS.load(img.src);
 
-// Preprocess speech bubble for OCR
-async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, invertedMask) {
-  return new Promise((mainResolve, mainReject) => {
-    // Create a canvas for the final result
-    const resultCanvas = document.createElement('canvas');
-    resultCanvas.width = img.width;
-    resultCanvas.height = img.height;
-    const resultCtx = resultCanvas.getContext('2d');
+  // Extract the subsection
+  const subsection = image.crop({
+    x: Math.max(0, x),
+    y: Math.max(0, y),
+    width: Math.min(w, image.width - x),
+    height: Math.min(h, image.height - y),
+  });
 
-    // Step 1: Fill the entire canvas with white (our background)
-    resultCtx.fillStyle = 'white';
-    resultCtx.fillRect(0, 0, resultCanvas.width, resultCanvas.height);
+  // Apply different processing based on text type
+  let processedSubsection;
 
-    // If we have a mask, process it
-    if (invertedMask) {
-      // Create a temporary canvas to hold the masked image
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = img.width;
-      tempCanvas.height = img.height;
-      const tempCtx = tempCanvas.getContext('2d');
+  if (classIndex === 2) { // text_free class
+    let grayscale = subsection.grey();
+    processedSubsection = grayscale.medianFilter({ radius: 10 });
+  } else {
+    processedSubsection = subsection.grey();
+  }
 
-      // Load the mask
-      const maskImg = new Image();
-      maskImg.src = invertedMask;
+  // Resize with optimal interpolation for text
+  const resizedSubsection = processedSubsection.resize({
+    width: targetWidth,
+    height: targetHeight,
+    preserveAspectRatio: true,
+  });
 
-      maskImg.onload = async () => {
-        // First draw the original image to the temp canvas
-        tempCtx.drawImage(img, 0, 0);
+  // Convert the resized subsection to a data URL
+  const subsectionImg = new Image();
+  subsectionImg.src = resizedSubsection.toDataURL();
 
-        // Erode the mask
-        const maskImage = await ImageJS.load(maskImg.src);
-        const denoisedMask = maskImage.gaussianFilter({ radius: 2 });
-        const erodedMask = denoisedMask.grey().erode({ iterations: 1 }); // Adjust iterations as needed
+  // Debug: Display the preprocessed subsection
+  displayDebugImage(subsectionImg.src, `Class: ${classIndex}`);
 
-        // Convert the eroded mask back to a canvas
-        const erodedMaskCanvas = document.createElement('canvas');
-        erodedMaskCanvas.width = erodedMask.width;
-        erodedMaskCanvas.height = erodedMask.height;
-        const erodedMaskCtx = erodedMaskCanvas.getContext('2d');
-        const rgbaData = new Uint8ClampedArray(erodedMask.width * erodedMask.height * 4);
-        for (let i = 0; i < erodedMask.data.length; i++) {
-          const value = erodedMask.data[i] > 0 ? 255 : 0;
-          rgbaData[i * 4] = value;     // R
-          rgbaData[i * 4 + 1] = value; // G
-          rgbaData[i * 4 + 2] = value; // B
-          rgbaData[i * 4 + 3] = value;   // A (fully opaque)
-        }
-        const imageData = new ImageData(rgbaData, erodedMask.width, erodedMask.height);
-        erodedMaskCtx.putImageData(imageData, 0, 0);
+  return subsectionImg;
+}
 
-        // Apply the mask to the image 
-        tempCtx.globalCompositeOperation = 'destination-in';
-        tempCtx.drawImage(erodedMaskCanvas, 0, 0, img.width, img.height);
-
-        // Reset composite operation
-        tempCtx.globalCompositeOperation = 'source-over';
-
-        resultCtx.drawImage(tempCanvas, 0, 0);
-
-        finishProcessing();
-      };
-
-      maskImg.onerror = mainReject;
-    } else {
-      // If no mask, just draw the original image on white background
-      resultCtx.drawImage(img, 0, 0);
-      finishProcessing();
-    }
-
-    // Function to extract and process the subsection
-    function finishProcessing() {
-      // Extract the subsection
-      const subsectionCanvas = document.createElement('canvas');
-      subsectionCanvas.width = targetWidth;
-      subsectionCanvas.height = targetHeight;
-      const subsectionCtx = subsectionCanvas.getContext('2d');
-
-      // Draw and resize the subsection from the result canvas
-      subsectionCtx.drawImage(
-        resultCanvas,
-        x, y, w, h, // Source rectangle
-        0, 0, targetWidth, targetHeight // Destination rectangle
-      );
-
-      // Convert the subsection to black and white
-      const imageData = subsectionCtx.getImageData(0, 0, targetWidth, targetHeight);
-      const data = imageData.data;
-      const threshold = 128; // Set a threshold value (0-255)
-
-      for (let i = 0; i < data.length; i += 4) {
-        const grayscale = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; // Convert to grayscale
-        const value = grayscale > threshold ? 255 : 0; // Apply threshold
-        data[i] = value;     // Red
-        data[i + 1] = value; // Green
-        data[i + 2] = value; // Blue
-        data[i + 3] = 255;   // Alpha (fully opaque)
-      }
-
-      subsectionCtx.putImageData(imageData, 0, 0);
-
-      // Return the processed image
-      const subsectionImg = new Image();
-      subsectionImg.onload = () => mainResolve(subsectionImg);
-      subsectionImg.onerror = mainReject;
-      subsectionImg.src = subsectionCanvas.toDataURL();
-    }
+function displayDebugImage(dataUrl, label = '') {
+  // Send the debug image to the content script
+  chrome.runtime.sendMessage({
+    action: 'debugImage',
+    dataUrl: dataUrl,
+    label: label
   });
 }
 
