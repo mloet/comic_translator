@@ -1,3 +1,4 @@
+
 // popup.js - handles interaction with the translation settings popup
 
 // Wait for DOM to be fully loaded before attaching event listeners
@@ -7,47 +8,75 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initializePopup() {
   // Get UI elements
+  const ocrServiceSelect = document.getElementById('ocrService');
+  const translationServiceSelect = document.getElementById('translationService');
   const apiKeyInput = document.getElementById('apiKey');
   const saveApiKeyButton = document.getElementById('saveApiKey');
   const sourceLanguageSelect = document.getElementById('sourceLanguage');
   const targetLanguageSelect = document.getElementById('targetLanguage');
-  const statusElement = document.getElementById('status');
 
   // Load saved settings
   loadSavedSettings();
 
+  // Save OCR and translation service settings
+  ocrServiceSelect.addEventListener('change', saveServiceSettings);
+  translationServiceSelect.addEventListener('change', saveServiceSettings);
+
   // Save API key
-  saveApiKeyButton.addEventListener('click', () => {
+  saveApiKeyButton.addEventListener('click', saveApiKey);
+
+  // Save language settings
+  sourceLanguageSelect.addEventListener('change', saveLanguageSettings);
+  targetLanguageSelect.addEventListener('change', saveLanguageSettings);
+
+  function saveServiceSettings() {
+    const ocrService = ocrServiceSelect.value;
+    const translationService = translationServiceSelect.value;
+
+    chrome.storage.sync.set({
+      ocrService: ocrService,
+      translationService: translationService
+    }, () => {
+      showStatus('Service settings saved!', 'green');
+
+      // Send message to background script
+      chrome.runtime.sendMessage({
+        action: 'updateserviceSettings',
+        settings: {
+          ocrService: ocrService,
+          translationService: translationService
+        }
+      }).catch(error => {
+        console.error('Error sending service settings:', error);
+      });
+    });
+  }
+
+  function saveApiKey() {
     const apiKey = apiKeyInput.value.trim();
 
     if (!apiKey) {
-      showStatus('Please enter an API key', 'red');
+      showStatus('API key cannot be empty!', 'red');
       return;
     }
 
-    // Save to storage
     chrome.storage.sync.set({ apiKey: apiKey }, () => {
       showStatus('API key saved!', 'green');
 
-      // Send message to background script to update the API key
+      // Send message to background script
       chrome.runtime.sendMessage({
-        action: 'updateTranslationSettings',
-        settings: {
-          apiKey: apiKey
-        }
+        action: 'updateserviceSettings',
+        settings: { apiKey: apiKey }
+      }).catch(error => {
+        console.error('Error sending API key:', error);
       });
     });
-  });
-
-  // Handle language selection changes
-  sourceLanguageSelect.addEventListener('change', saveLanguageSettings);
-  targetLanguageSelect.addEventListener('change', saveLanguageSettings);
+  }
 
   function saveLanguageSettings() {
     const sourceLanguage = sourceLanguageSelect.value;
     const targetLanguage = targetLanguageSelect.value;
 
-    // Save to storage
     chrome.storage.sync.set({
       sourceLanguage: sourceLanguage,
       targetLanguage: targetLanguage
@@ -56,29 +85,48 @@ function initializePopup() {
 
       // Send message to background script
       chrome.runtime.sendMessage({
-        action: 'updateTranslationSettings',
+        action: 'updateserviceSettings',
         settings: {
           sourceLanguage: sourceLanguage,
           targetLanguage: targetLanguage
         }
+      }).catch(error => {
+        console.error('Error sending language settings:', error);
       });
     });
   }
 }
 
-// Load saved settings from storage
 function loadSavedSettings() {
-  chrome.storage.sync.get(['apiKey', 'sourceLanguage', 'targetLanguage'], function (items) {
+  chrome.storage.sync.get([
+    'apiKey',
+    'ocrService',
+    'translationService',
+    'sourceLanguage',
+    'targetLanguage'
+  ], function (items) {
     const apiKeyInput = document.getElementById('apiKey');
+    const ocrServiceSelect = document.getElementById('ocrService');
+    const translationServiceSelect = document.getElementById('translationService');
     const sourceLanguageSelect = document.getElementById('sourceLanguage');
     const targetLanguageSelect = document.getElementById('targetLanguage');
 
-    // Load API key if it exists
+    // Load API key
     if (items.apiKey) {
       apiKeyInput.value = items.apiKey;
     }
 
-    // Load language preferences
+    // Load OCR service
+    if (items.ocrService) {
+      ocrServiceSelect.value = items.ocrService;
+    }
+
+    // Load translation service
+    if (items.translationService) {
+      translationServiceSelect.value = items.translationService;
+    }
+
+    // Load language settings
     if (items.sourceLanguage) {
       sourceLanguageSelect.value = items.sourceLanguage;
     }
@@ -89,13 +137,12 @@ function loadSavedSettings() {
   });
 }
 
-// Show status message
 function showStatus(message, color) {
   const statusElement = document.getElementById('status');
   statusElement.textContent = message;
   statusElement.style.color = color;
 
-  // Clear after 3 seconds
+  // Clear status after 3 seconds
   setTimeout(() => {
     statusElement.textContent = '';
   }, 3000);

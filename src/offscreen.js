@@ -3,7 +3,6 @@ import Tesseract from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
 const MODEL_PATH = chrome.runtime.getURL("models/comic_text_bubble_detector.onnx");
-const maskConfidence = 0.9;
 const bubbleConfidence = 0.8;
 
 // Load the ONNX model
@@ -82,14 +81,8 @@ async function initializeWorker(lang = 'eng') {
   });
 
   await tesseract_worker.setParameters({
-    tessedit_create_boxfile: '1', // Enable BOX output
     preserve_interword_spaces: '1',
-    tessedit_char_blacklist: '#$%&\'<=>@[\\]^_`{|}~0123456789',
-    textord_show_boxes: '1',
-    textord_heavy_nr: '1',  // Heavy noise removal
-    tessedit_enable_dict_correction: '1',        // Enable dictionary correction
-    language_model_penalty_non_dict_word: '0.8', // Penalize non-dictionary words
-    tessedit_minimal_confidence_threshold: '60',
+    tessedit_char_blacklist: '#$¥%£&®<=>@[\\]^_`{|}~0123456789',
     psm: 6
   });
 
@@ -97,23 +90,64 @@ async function initializeWorker(lang = 'eng') {
   return tesseract_worker;
 }
 
-// Global translation settings
-let translationSettings = {
+async function fetchGoogleCloudVisionOCR(base64Image) {
+  const apiKey = serviceSettings.apiKey;
+  if (!apiKey) {
+    console.error('Google Cloud Vision API key is missing');
+    return '';
+  }
+
+  try {
+    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: base64Image.split(',')[1] },
+          features: [{ type: 'TEXT_DETECTION' }]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Google Cloud Vision API error: ${response.status} - ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    // More robust check for text annotations
+    if (!data.responses || !data.responses[0] || !data.responses[0].textAnnotations ||
+      !data.responses[0].textAnnotations[0]) {
+      console.log('No text detected by Google Cloud Vision API');
+      return '';
+    }
+
+    return data.responses[0].textAnnotations[0].description;
+  } catch (error) {
+    console.error('Error fetching Google Cloud Vision OCR results:', error);
+    return ''; // Consider returning an error flag or object instead
+  }
+}
+
+// Global service settings
+let serviceSettings = {
   apiKey: '',
+  ocrService: 'tesseract', // Default to tesseract
+  translationService: 'deepl',
   sourceLanguage: 'AUTO',
   targetLanguage: 'EN'
 };
 
-async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
+async function translateWithGoogleAPI(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
     return text; // Return the original text
   }
 
   // Use provided languages or fall back to global settings
-  const sourceLang = forcedSourceLang || translationSettings.sourceLanguage;
-  const targetLang = forcedTargetLang || translationSettings.targetLanguage;
-  const apiKey = translationSettings.apiKey;
+  const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
+  const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
+  const apiKey = serviceSettings.apiKey;
 
   // Skip translation if API key is missing or languages are the same
   if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
@@ -121,7 +155,64 @@ async function translateText(text, forcedSourceLang = null, forcedTargetLang = n
     return text;
   }
 
-  console.log('Translation request:', {
+  // Convert language codes to Google Translate format
+  const googleSourceLang = sourceLang === 'AUTO' ? '' : sourceLang.toLowerCase();
+  const googleTargetLang = targetLang.toLowerCase();
+
+  console.log('Google Translation request:', {
+    text,
+    sourceLang: googleSourceLang || 'auto',
+    targetLang: googleTargetLang,
+  });
+
+  try {
+    const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        q: text,
+        source: googleSourceLang || null,
+        target: googleTargetLang,
+        format: "text"
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.data && data.data.translations && data.data.translations.length > 0) {
+      return data.data.translations[0].translatedText;
+    } else {
+      throw new Error('Invalid response structure from Google Translate API');
+    }
+  } catch (error) {
+    console.error('Google Translation error:', error);
+    return text; // Fallback to the original text if translation fails
+  }
+}
+
+async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLang = null) {
+  if (!text || text.trim() === '') {
+    console.error('Translation error: Text is empty');
+    return text; // Return the original text
+  }
+
+  // Use provided languages or fall back to global settings
+  const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
+  const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
+  const apiKey = serviceSettings.apiKey;
+
+  // Skip translation if API key is missing or languages are the same
+  if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
+    console.log('Translation skipped: missing API key or same language');
+    return text;
+  }
+
+  console.log('DeepL Translation request:', {
     text,
     sourceLang,
     targetLang,
@@ -148,32 +239,43 @@ async function translateText(text, forcedSourceLang = null, forcedTargetLang = n
     const data = await response.json();
     return data.translations[0].text; // Extract the translated text
   } catch (error) {
-    console.error('Translation error:', error);
+    console.error('DeepL Translation error:', error);
     return text; // Fallback to the original text if translation fails
   }
 }
 
-// Listen for messages from the background script
+async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
+  // Use the selected translation service
+  const translationService = serviceSettings.translationService || 'deepl';
+
+  if (translationService === 'deepl') {
+    return translateWithDeepL(text, forcedSourceLang, forcedTargetLang);
+  } else if (translationService === 'googleTranslate') {
+    return translateWithGoogleAPI(text, forcedSourceLang, forcedTargetLang);
+  } else {
+    console.error('Unknown translation service:', translationService);
+    return text; // Return original text if service is unknown
+  }
+}
+
 if (!window.listenerRegistered) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("Offscreen received message:", message.action);
 
     if (message.action === "detectObjects") {
-      // Check if translation settings are included
-      if (message.translationSettings) {
-        translationSettings = message.translationSettings;
-        console.log("Updated translation settings:", translationSettings);
+      // Check if service settings are included
+      if (message.serviceSettings) {
+        serviceSettings = message.serviceSettings;
+        console.log("Using service settings:", serviceSettings);
       }
       detectObjects(message.imageData, message.requestId);
     }
 
-    if (message.action === "updateTranslationSettings") {
-      translationSettings = message.settings;
-      console.log("Updated translation settings:", translationSettings);
-
-      // If source language changed, we might need to reinitialize worker
-      // Note: we don't do this immediately, but it will happen at next detection
-      console.log("Source language set to:", translationSettings.sourceLanguage);
+    if (message.action === "updateserviceSettings") {
+      serviceSettings = message.settings;
+      console.log("Updated service settings:", serviceSettings);
+      console.log("Source language set to:", serviceSettings.sourceLanguage);
+      console.log("OCR service set to:", serviceSettings.ocrService);
     }
 
     return false;
@@ -186,15 +288,11 @@ async function detectObjects(base64Image, requestId) {
   try {
     console.log("Processing image for detection");
 
-    // Load model if needed
     await loadModel();
 
-    // Get Tesseract language based on source language setting
-    const tesseractLang = languageMapping[translationSettings.sourceLanguage] || 'eng';
-    console.log(`Using Tesseract language: ${tesseractLang} for source language: ${translationSettings.sourceLanguage}`);
-
-    // Initialize worker with the proper language
-    tesseract_worker = await initializeWorker(tesseractLang);
+    if (serviceSettings.ocrService === 'tesseract') {
+      tesseract_worker = await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
+    }
 
     // Convert base64 to image data
     const { imageData, width, height, img } = await base64ToImageData(base64Image);
@@ -202,13 +300,11 @@ async function detectObjects(base64Image, requestId) {
     // Preprocess image
     const inputTensor = preprocessImage(img);
 
-    // console.log(inputTensor)
     // Run inference
     const outputs = await session.run({ pixel_values: inputTensor });
-    // console.log(outputs);
 
     // Process results
-    const results = await postprocessOutput(outputs, width, height, img, tesseractLang);
+    const results = await postprocessOutput(outputs, width, height, img);
     console.log(`Found ${results.length} detections`);
 
     // Send results back
@@ -293,14 +389,10 @@ const id2label = {
 };
 
 async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
-  // console.log(outputs);
   const logits = outputs.logits.data; // Classification logits
   const predBoxes = outputs.pred_boxes.data; // Bounding box predictions
-  // console.log(logits);
-  // console.log(predBoxes);
   const numQueries = outputs.logits.dims[1]; // Number of object queries
   const numClasses = outputs.logits.dims[2]; // Number of classes (bubble, text_bubble, text_free)
-  // console.log(numQueries, numClasses);
   const detections = [];
 
   for (let i = 0; i < numQueries; i++) {
@@ -338,32 +430,42 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
 
   // Perform non-max suppression to filter overlapping boxes
   const filteredDetections = nonMaxSuppression(detections, 0.5);
-  console.log(tesseract_worker);
 
   // Perform OCR on the detected regions
   for (const detection of filteredDetections) {
-    const { x1, y1, x2, y2 } = detection;
+    const { x1, y1, x2, y2, classIndex } = detection;
     const w = x2 - x1;
     const h = y2 - y1;
+    let w2 = w * 4;
+    let h2 = h * 3;
 
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * 3, h * 3);
+    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w2, h2, classIndex);
 
     try {
-      const result = await tesseract_worker.recognize(subsectionImg.src);
-      detection.text = result.data.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-      console.log(result.data);
+      const ocrService = serviceSettings.ocrService || 'tesseract';
+      if (ocrService === 'tesseract') {
+        // Use Tesseract for OCR
+        const { data: { text, blocks } } = await tesseract_worker.recognize(subsectionImg.src, {}, { blocks: true });
+        detection.text = text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
+      } else if (ocrService === 'googleCloudVision') {
+        // Use Google Cloud Vision API for OCR
+        const visionResults = await fetchGoogleCloudVisionOCR(subsectionImg.src);
+        detection.text = visionResults.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
+      }
     } catch (error) {
       console.error('Error recognizing text:', error);
       detection.text = ''; // Fallback to empty text
       continue;
     }
 
-    // console.log(detection.text);
-    detection.translatedText = detection.text;
+    detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage).toUpperCase();;
+    console.log(detection.translatedText);
+    detection.subsectionImg = subsectionImg.src;
   }
 
   return filteredDetections;
 }
+
 async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, classIndex) {
   // Load the image using ImageJS
   const image = await ImageJS.load(img.src);
@@ -376,83 +478,34 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
     height: Math.min(h, image.height - y),
   });
 
-  // Apply different processing based on text type
-  let processedSubsection;
-
-  if (classIndex === 2) { // text_free class
-    let grayscale = subsection.grey();
-    processedSubsection = grayscale.medianFilter({ radius: 10 });
-  } else {
-    processedSubsection = subsection.grey();
-  }
-
-  // Resize with optimal interpolation for text
-  const resizedSubsection = processedSubsection.resize({
+  const resizedSubsection = subsection.resize({
     width: targetWidth,
     height: targetHeight,
     preserveAspectRatio: true,
   });
 
+  // Apply different processing based on text type
+  let processedSubsection;
+
+  if (classIndex == 2) { // text_free class
+    console.log('text_free')
+    processedSubsection = resizedSubsection.grey();
+    processedSubsection = processedSubsection.gaussianFilter({ radius: 6 });
+    // processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
+    processedSubsection = processedSubsection.dilate({ iterations: 2 });
+  } else {
+    console.log('bubble')
+    processedSubsection = resizedSubsection.grey();
+    processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
+  }
+  // logImageForDebug(processedSubsection, 'Processed Subsection');
+
   // Convert the resized subsection to a data URL
   const subsectionImg = new Image();
-  subsectionImg.src = resizedSubsection.toDataURL();
+  subsectionImg.src = processedSubsection.toDataURL();
 
-  // Debug: Display the preprocessed subsection
-  displayDebugImage(subsectionImg.src, `Class: ${classIndex}`);
 
   return subsectionImg;
-}
-
-function displayDebugImage(dataUrl, label = '') {
-  // Send the debug image to the content script
-  chrome.runtime.sendMessage({
-    action: 'debugImage',
-    dataUrl: dataUrl,
-    label: label
-  });
-}
-
-// Generate a binary mask from the mask coefficients
-function generateMask(maskCoeffs, maskProtos, maskDims, originalWidth, originalHeight) {
-  const protoHeight = maskDims[2];
-  const protoWidth = maskDims[3];
-
-  const mask = new Float32Array(protoHeight * protoWidth).fill(0);
-
-  for (let h = 0; h < protoHeight; h++) {
-    for (let w = 0; w < protoWidth; w++) {
-      let val = 0;
-      const pixelIdx = h * protoWidth + w;
-
-      for (let c = 0; c < maskDims[1]; c++) {
-        const protoIdx = c * protoHeight * protoWidth + pixelIdx;
-        val += maskCoeffs[c] * maskProtos[protoIdx];
-      }
-
-      mask[pixelIdx] = val;
-    }
-  }
-
-  const sigmoidMask = mask.map(v => 1 / (1 + Math.exp(-v)));
-  const binaryMask = sigmoidMask.map(v => (v > maskConfidence ? 1 : 0));
-
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = protoWidth;
-  maskCanvas.height = protoHeight;
-  const maskCtx = maskCanvas.getContext('2d');
-  const maskImageData = maskCtx.createImageData(protoWidth, protoHeight);
-
-  for (let i = 0; i < binaryMask.length; i++) {
-    const value = binaryMask[i] * 255;
-    maskImageData.data[i * 4] = value;     // R
-    maskImageData.data[i * 4 + 1] = value; // G
-    maskImageData.data[i * 4 + 2] = value; // B
-    maskImageData.data[i * 4 + 3] = binaryMask[i] * 255;   // A
-  }
-
-  maskCtx.putImageData(maskImageData, 0, 0);
-
-  return maskCanvas.toDataURL('image/png');
 }
 
 function calculateIoU(box1, box2) {

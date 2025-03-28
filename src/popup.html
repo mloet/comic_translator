@@ -13,13 +13,33 @@
   <div class="container">
     <h1>Comic Bubble Translator</h1>
 
+    <div class="settings-section">
+      <!-- OCR Service Selection -->
+      <div class="ocr-service-container">
+        <label for="ocrService">OCR Service:</label>
+        <select id="ocrService">
+          <option value="tesseract">Tesseract</option>
+          <option value="googleCloudVision">Google Cloud Vision</option>
+        </select>
+      </div>
+
+      <!-- Translation Service Selection -->
+      <div class="translation-service-container">
+        <label for="translationService">Translation Service:</label>
+        <select id="translationService">
+          <option value="deepl">DeepL</option>
+          <option value="googleTranslate">Google Translate</option>
+        </select>
+      </div>
+    </div>
+
     <!-- Translation Settings -->
     <div class="settings-section">
       <!-- API Key Input -->
       <div class="api-key-container">
-        <label for="apiKey">DeepL API Key:</label>
+        <label for="apiKey">API Key:</label>
         <div class="api-key-input">
-          <input type="password" id="apiKey" placeholder="Enter your DeepL API key">
+          <input type="password" id="apiKey" placeholder="Enter your API key">
           <button id="saveApiKey" class="small-button">Save</button>
         </div>
       </div>

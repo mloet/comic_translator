@@ -47,17 +47,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const { callback, sourceTabId, imageId, source } = requestData;
 
-    // If from popup (has callback function)
-    if (source === 'popup' && callback) {
-      console.log(`Sending results back to popup for request ${message.requestId}`);
-
-      if (message.error) {
-        callback({ error: message.error });
-      } else {
-        callback({ results: message.results });
-      }
-    }
-
     // If from content script (has tab ID and image ID)
     if (source === 'content' && sourceTabId && imageId) {
       console.log(`Sending results to content script in tab ${sourceTabId} for image ${imageId}`);
@@ -81,26 +70,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Handle messages from popup.js or content.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle detection request from popup
-  if (message.action === "initDetection") {
-    const currentRequestId = requestId++;
-    console.log(`Received detection request from popup, assigned ID ${currentRequestId}`);
 
-    // Store callback with source information
-    pendingRequests.set(currentRequestId, {
-      callback: sendResponse,
-      source: 'popup'
+  // Handle settings updates from popup
+  if (message.action === "updateserviceSettings") {
+    // Update settings
+    if (message.settings.apiKey !== undefined) {
+      serviceSettings.apiKey = message.settings.apiKey;
+    }
+    if (message.settings.ocrService !== undefined) {
+      serviceSettings.ocrService = message.settings.ocrService;
+    }
+    if (message.settings.translationService !== undefined) {
+      serviceSettings.translationService = message.settings.translationService;
+    }
+    if (message.settings.sourceLanguage !== undefined) {
+      serviceSettings.sourceLanguage = message.settings.sourceLanguage;
+    }
+    if (message.settings.targetLanguage !== undefined) {
+      serviceSettings.targetLanguage = message.settings.targetLanguage;
+    }
+
+    console.log('Service settings updated:', serviceSettings);
+
+    // Forward settings to offscreen document
+    chrome.runtime.sendMessage({
+      action: "updateserviceSettings",
+      settings: serviceSettings
+    }).catch(error => {
+      console.error('Error forwarding settings to offscreen document:', error);
     });
 
-    // Process the detection request
-    processDetectionRequest(message.imageData, currentRequestId);
-
-    // Return true to indicate we'll respond asynchronously
-    return true;
+    return false;
   }
 
   // Handle detection request from webpage content script
-  else if (message.action === "initWebpageDetection") {
+  if (message.action === "initWebpageDetection") {
     const currentRequestId = requestId++;
     console.log(`Received detection request from content script in tab ${sender.tab?.id}, assigned ID ${currentRequestId}`);
 
@@ -111,8 +115,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       source: 'content'
     });
 
-    // Process the detection request
-    processDetectionRequest(message.imageData, currentRequestId);
+    // Process the detection request with current service settings
+    processDetectionRequest(message.imageData, currentRequestId, serviceSettings);
 
     // No need for a synchronous response
     return false;
@@ -120,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Process detection request by forwarding to offscreen document
-async function processDetectionRequest(imageData, requestId) {
+async function processDetectionRequest(imageData, requestId, settings) {
   try {
     const offscreenReady = await ensureOffscreenDocument();
 
@@ -130,12 +134,14 @@ async function processDetectionRequest(imageData, requestId) {
     }
 
     console.log(`Forwarding detection request to offscreen document for request ${requestId}`);
+    console.log(`Using service settings:`, settings);
 
     // Forward the request to the offscreen document
     chrome.runtime.sendMessage({
       action: "detectObjects",
       imageData: imageData,
-      requestId: requestId
+      requestId: requestId,
+      serviceSettings: settings
     }).catch(error => {
       handleDetectionError(requestId, `Error sending to offscreen document: ${error.message}`);
     });
@@ -200,72 +206,23 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === "open-popup") {
     // Open the popup
     chrome.action.openPopup();
-  } else if (command === "start-detection") {
-    // Send a message to the popup to start detection
-    chrome.runtime.sendMessage({ action: "startDetection" }).catch(error => {
-      console.error("Error sending start detection command:", error);
-    });
   }
 });
 
-// Add this to your background.js file to handle translation settings
-
-// Storage for translation settings
-let translationSettings = {
+// Storage for service settings
+let serviceSettings = {
   apiKey: '',
+  ocrService: 'tesseract',
+  translationService: 'deepl',
   sourceLanguage: 'AUTO',
   targetLanguage: 'EN'
 };
 
 // Load saved settings when background script starts
-chrome.storage.sync.get(['apiKey', 'sourceLanguage', 'targetLanguage'], function (items) {
-  if (items.apiKey) translationSettings.apiKey = items.apiKey;
-  if (items.sourceLanguage) translationSettings.sourceLanguage = items.sourceLanguage;
-  if (items.targetLanguage) translationSettings.targetLanguage = items.targetLanguage;
-});
-
-// Add this to your existing onMessage listener in background.js
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle settings updates from popup
-  if (message.action === "updateTranslationSettings") {
-    // Update settings
-    if (message.settings.apiKey !== undefined) {
-      translationSettings.apiKey = message.settings.apiKey;
-    }
-    if (message.settings.sourceLanguage !== undefined) {
-      translationSettings.sourceLanguage = message.settings.sourceLanguage;
-    }
-    if (message.settings.targetLanguage !== undefined) {
-      translationSettings.targetLanguage = message.settings.targetLanguage;
-    }
-
-    console.log('Translation settings updated:', translationSettings);
-
-    // Forward settings to offscreen document
-    chrome.runtime.sendMessage({
-      action: "updateTranslationSettings",
-      settings: translationSettings
-    }).catch(error => {
-      console.error('Error forwarding settings to offscreen document:', error);
-    });
-
-    return false;
-  }
-
-  // Modify the existing processDetectionRequest function to include translation settings
-  // When forwarding detection requests to offscreen.js, include the current settings
-  if (message.action === "initDetection" || message.action === "initWebpageDetection") {
-    // Include translation settings with the request
-    message.translationSettings = translationSettings;
-  }
-});
-
-chrome.runtime.onStartup.addListener(async () => {
-  console.log("Extension started, ensuring offscreen document is created...");
-  const offscreenReady = await ensureOffscreenDocument();
-  if (offscreenReady) {
-    console.log("Offscreen document is ready.");
-  } else {
-    console.error("Failed to create offscreen document on startup.");
-  }
+chrome.storage.sync.get(['apiKey', 'ocrService', 'translationService', 'sourceLanguage', 'targetLanguage'], function (items) {
+  if (items.apiKey) serviceSettings.apiKey = items.apiKey;
+  if (items.ocrService) serviceSettings.ocrService = items.ocrService;
+  if (items.translationService) serviceSettings.translationService = items.translationService;
+  if (items.sourceLanguage) serviceSettings.sourceLanguage = items.sourceLanguage;
+  if (items.targetLanguage) serviceSettings.targetLanguage = items.targetLanguage;
 });

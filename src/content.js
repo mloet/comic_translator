@@ -412,7 +412,10 @@ function handleDetectionResults(imageId, results, error) {
 
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-  const { x1, y1, x2, y2, confidence, mask, text, translatedText } = detection;
+  const { x1, y1, x2, y2, text, translatedText, subsectionImg, classIndex, classLabel } = detection;
+  console.log('text:', translatedText);
+  console.log('Label', classIndex, classLabel);
+  console.log('Subsection Image', subsectionImg);
 
   // Skip invalid detections
   if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
@@ -430,70 +433,39 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   const boxWidth = scaledX2 - scaledX1;
   const boxHeight = scaledY2 - scaledY1;
 
-  // Add text overlay if text is available
-  if (translatedText && translatedText.trim()) {
-    console.log(`Adding text overlay: ${translatedText}`);
-    // Create a white background rectangle with fading edges
-    const backgroundDiv = document.createElement('div');
-    backgroundDiv.style.position = 'absolute';
-    backgroundDiv.style.left = `${scaledX1}px`;
-    backgroundDiv.style.top = `${scaledY1}px`;
-    backgroundDiv.style.width = `${boxWidth}px`;
-    backgroundDiv.style.height = `${boxHeight}px`;
+  // Create a container for the detection
+  const detectionContainer = document.createElement('div');
+  detectionContainer.style.position = 'absolute';
+  detectionContainer.style.left = `${scaledX1}px`;
+  detectionContainer.style.top = `${scaledY1}px`;
+  detectionContainer.style.width = `${boxWidth}px`;
+  detectionContainer.style.height = `${boxHeight}px`;
+  detectionContainer.style.zIndex = '3';
+  detectionContainer.style.pointerEvents = 'none'; // Prevent clicks on the container
 
-    // Add a gradient to fade out at the edges and corners
-    backgroundDiv.style.background = `
-  radial-gradient(circle, rgba(255, 255, 255, 1) 80%, rgba(255, 255, 255, 0) 100%)
-`;
-    backgroundDiv.style.pointerEvents = 'none'; // Prevent interaction with the background
-    backgroundDiv.style.zIndex = '2'; // Ensure it appears below the text
+  // Create text overlay
+  const textDiv = document.createElement('div');
+  textDiv.textContent = translatedText || 'No text detected';
+  textDiv.style.position = 'absolute';
+  textDiv.style.width = '100%';
+  textDiv.style.height = '100%';
+  textDiv.style.display = 'flex';
+  textDiv.style.alignItems = 'center';
+  textDiv.style.justifyContent = 'center';
+  textDiv.style.fontFamily = 'CC Wild Words, Comic Sans MS, Arial, sans-serif';
+  textDiv.style.fontWeight = 'bold';
+  textDiv.style.fontStyle = 'italic';
+  textDiv.style.backgroundColor = 'rgba(255, 255, 255, 1)';
+  textDiv.style.color = 'black';
+  textDiv.style.fontSize = '10px';
+  textDiv.style.textAlign = 'center';
 
-    container.appendChild(backgroundDiv);
+  // Append elements to the detection container
+  detectionContainer.appendChild(textDiv);
 
-
-    // Create the text overlay
-    const textDiv = document.createElement('div');
-    textDiv.className = 'bubble-text-overlay';
-    textDiv.style.position = 'absolute';
-    textDiv.style.left = `${scaledX1}px`;
-    textDiv.style.top = `${scaledY1}px`;
-    textDiv.style.width = `${boxWidth}px`;
-    textDiv.style.height = `${boxHeight}px`;
-    textDiv.style.display = 'flex';
-    textDiv.style.alignItems = 'center';
-    textDiv.style.justifyContent = 'center';
-    textDiv.style.textAlign = 'center';
-    textDiv.style.overflow = 'hidden';
-    textDiv.style.padding = '5px';
-    textDiv.style.boxSizing = 'border-box';
-    textDiv.style.color = 'black';
-    textDiv.style.fontFamily = 'CC Wild Words, Comic Sans MS, Arial, sans-serif';
-    textDiv.style.fontSize = `6px`;
-    textDiv.style.fontWeight = 'bold';
-    textDiv.style.whiteSpace = 'normal';
-    textDiv.style.wordWrap = 'break-word';
-    textDiv.style.textJustify = 'inter-word';
-    textDiv.style.hyphens = 'auto';
-    textDiv.style.textWrap = 'balance'; // Modern property to balance text
-    textDiv.style.pointerEvents = 'auto';
-    textDiv.style.cursor = 'pointer';
-    textDiv.style.zIndex = '3'; // Ensure text is above the background
-    textDiv.textContent = translatedText;
-
-    // Add edit functionality
-    textDiv.title = 'Click to edit text';
-    textDiv.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const newText = prompt('Edit detected text:', textDiv.textContent);
-      if (newText !== null) {
-        textDiv.textContent = newText;
-      }
-    });
-
-    container.appendChild(textDiv); // Append the text overlay after the background
-  }
+  // Append the detection container to the main container
+  container.appendChild(detectionContainer);
 }
-
 // Handle context menu detection request
 function handleContextMenuDetection(imageUrl) {
   // Find the image with this URL
