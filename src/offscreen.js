@@ -237,7 +237,7 @@ async function performOCR(imageSrc, classIndex) {
   const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
   const fontSize = estimateFontSize(ocrResults.blocks);
   console.log('OCR Results:', processedText);
-  console.log('Font Size:', fontSize);
+  // console.log('Font Size:', fontSize);
   console.log(ocrResults.blocks);
   console.log(imageSrc);
   return { text: processedText, blocks: ocrResults.blocks, fontSize: fontSize };
@@ -301,13 +301,14 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
 
   const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
   const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
-  const apiKey = serviceSettings.deeplApiKey; // Use deeplApiKey instead of apiKey
+  const apiKey = serviceSettings.deeplApiKey;
 
   if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
     console.log('Translation skipped: missing API key or same language');
     return text;
   }
 
+  console.log(apiKey, sourceLang, targetLang, text);
   try {
     const response = await fetch("https://api-free.deepl.com/v2/translate", {
       method: "POST",
