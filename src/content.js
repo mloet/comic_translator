@@ -427,6 +427,11 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   const boxWidth = scaledX2 - scaledX1;
   const boxHeight = scaledY2 - scaledY1;
 
+  // Estimate font size and scale it
+  const estimatedFontSize = detection.fontSize || boxHeight; // Use detection's font size or fallback to box height
+  const scaledFontSize = estimatedFontSize * Math.min(scaleX, scaleY) * 0.75;
+  // console.log('Scaled font size:', scaledFontSize);
+
   // Create a container for the detection
   const detectionContainer = document.createElement('div');
   detectionContainer.style.position = 'absolute';
@@ -451,7 +456,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   textDiv.style.fontStyle = 'italic';
   textDiv.style.backgroundColor = 'rgba(255, 255, 255, 1)';
   textDiv.style.color = 'black';
-  textDiv.style.fontSize = '10px';
+  textDiv.style.fontSize = `${scaledFontSize}px`;
   textDiv.style.textAlign = 'center';
 
   // Append elements to the detection container

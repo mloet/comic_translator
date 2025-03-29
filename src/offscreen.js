@@ -2,28 +2,31 @@ import * as ort from "onnxruntime-web";
 import Tesseract from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
+// Global service settings
+let serviceSettings = {
+  googleApiKey: '',
+  deeplApiKey: '',
+  ocrService: 'tesseract',
+  translationService: 'deepl',
+  sourceLanguage: 'AUTO',
+  targetLanguage: 'EN'
+};
+
+// ONNX model path, confidence threshold, and label mapping
+let session = null;
 const MODEL_PATH = chrome.runtime.getURL("models/comic_text_bubble_detector.onnx");
 const bubbleConfidence = 0.8;
+const id2label = {
+  0: "bubble",
+  1: "text_bubble",
+  2: "text_free",
+};
 
-// Load the ONNX model
-let session = null;
-async function loadModel() {
-  if (!session) {
-    try {
-      console.log("Loading ONNX model from:", MODEL_PATH);
-      session = await ort.InferenceSession.create(MODEL_PATH, {
-        executionProviders: ["wasm"]
-      });
-      console.log("Model loaded successfully");
-    } catch (error) {
-      console.error("Error loading model:", error);
-      throw error;
-    }
-  }
-}
+// Tesseract worker
+let tesseract_worker = null;
 
+// DeepL language code -> Tesseract language code
 const languageMapping = {
-  // DeepL language code -> Tesseract language code
   'AUTO': 'eng', // Default to English for auto-detect
   'AR': 'ara',
   'BG': 'bul',
@@ -57,8 +60,42 @@ const languageMapping = {
   'ZH': 'chi_sim'
 };
 
+// Register listeners
+if (!window.listenersRegistered) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("Offscreen received message:", message.action);
+
+    if (message.action === "detectObjects") {
+      // Check if service settings are included
+      if (message.serviceSettings) {
+        serviceSettings = message.serviceSettings;
+        console.log("Using service settings:", serviceSettings);
+      }
+      detectObjects(message.imageData, message.requestId);
+    }
+
+    return false;
+  });
+  window.listenersRegistered = true;
+}
+
+// Load the ONNX model
+async function loadModel() {
+  if (!session) {
+    try {
+      console.log("Loading ONNX model from:", MODEL_PATH);
+      session = await ort.InferenceSession.create(MODEL_PATH, {
+        executionProviders: ["wasm"]
+      });
+      console.log("Model loaded successfully");
+    } catch (error) {
+      console.error("Error loading model:", error);
+      throw error;
+    }
+  }
+}
+
 // Initialize Tesseract worker
-let tesseract_worker = null;
 async function initializeWorker(lang = 'eng') {
   if (tesseract_worker) {
     // If worker exists with a different language, terminate it
@@ -82,7 +119,7 @@ async function initializeWorker(lang = 'eng') {
 
   await tesseract_worker.setParameters({
     preserve_interword_spaces: '1',
-    tessedit_char_blacklist: '#$¥%£&®<=>@[\\]^_`{|}~0123456789',
+    tessedit_char_blacklist: '#$¥%£&©®<=>@[\\]^_`{|}~0123456789¢€₹₩₽₺±×÷∞≈≠…•§¶°†‡‘’“”‹›«»–—‒™℠µ←→↑↓↔↕☑☐☒★☆',
     psm: 6
   });
 
@@ -90,11 +127,27 @@ async function initializeWorker(lang = 'eng') {
   return tesseract_worker;
 }
 
-async function fetchGoogleCloudVisionOCR(base64Image) {
-  const apiKey = serviceSettings.googleApiKey; // Use googleApiKey instead of apiKey
+// Perform OCR using Tesseract.js
+async function performTesseractOCR(imageSrc, lang = 'eng') {
+  if (!tesseract_worker) {
+    tesseract_worker = await initializeWorker(lang);
+  }
+
+  try {
+    const { data: { text, blocks } } = await tesseract_worker.recognize(imageSrc, {}, { blocks: true });
+    return { text, blocks };
+  } catch (error) {
+    console.error('Error performing OCR:', error);
+    return { text: '', blocks: [] };
+  }
+}
+
+// Fetch OCR results from Google Cloud Vision API
+async function performGoogleOCR(imageSrc) {
+  const apiKey = serviceSettings.googleApiKey;
   if (!apiKey) {
     console.error('Google Cloud Vision API key is missing');
-    return '';
+    return { text: '', blocks: [] };
   }
 
   try {
@@ -103,7 +156,7 @@ async function fetchGoogleCloudVisionOCR(base64Image) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requests: [{
-          image: { content: base64Image.split(',')[1] },
+          image: { content: imageSrc.split(',')[1] },
           features: [{ type: 'TEXT_DETECTION' }]
         }]
       })
@@ -114,31 +167,83 @@ async function fetchGoogleCloudVisionOCR(base64Image) {
     }
 
     const data = await response.json();
-
-    if (!data.responses || !data.responses[0] || !data.responses[0].textAnnotations ||
-      !data.responses[0].textAnnotations[0]) {
+    if (!data.responses || !data.responses[0] || !data.responses[0].textAnnotations) {
       console.log('No text detected by Google Cloud Vision API');
-      return '';
+      return { text: '', blocks: [] };
     }
 
-    return data.responses[0].textAnnotations[0].description;
+    const textAnnotations = data.responses[0].textAnnotations;
+    const text = textAnnotations[0].description;
+    const blocks = textAnnotations.slice(1).map(annotation => ({
+      text: annotation.description,
+      boundingBox: annotation.boundingPoly.vertices
+    }));
+
+    return { text, blocks };
   } catch (error) {
     console.error('Error fetching Google Cloud Vision OCR results:', error);
-    return '';
+    return { text: '', blocks: [] };
   }
 }
 
-// Global service settings
+// Estimate font size based on OCR results
+function estimateFontSize(blocks) {
+  if (!blocks || blocks.length === 0) {
+    console.warn('No blocks provided for font size estimation.');
+    return 0;
+  }
 
-let serviceSettings = {
-  googleApiKey: '',
-  deeplApiKey: '',
-  ocrService: 'tesseract',
-  translationService: 'deepl',
-  sourceLanguage: 'AUTO',
-  targetLanguage: 'EN'
-};
+  let totalHeight = 0;
+  let lineCount = 0;
 
+  blocks.forEach(block => {
+    if (block.paragraphs) {
+      block.paragraphs.forEach(paragraph => {
+        if (paragraph.lines) {
+          paragraph.lines.forEach(line => {
+            if (line.confidence > 70) {
+              totalHeight += line.rowAttributes.rowHeight;
+              lineCount++;
+            }
+          });
+        }
+      });
+    }
+  });
+
+  if (lineCount === 0) {
+    console.warn('No lines found for font size estimation.');
+    return 0;
+  }
+
+  const averageFontSize = totalHeight / lineCount; // Average height of lines as font size
+  // console.log(`Estimated font size: ${averageFontSize}`);
+  return averageFontSize;
+}
+
+async function performOCR(imageSrc, classIndex) {
+  const ocrService = serviceSettings.ocrService || 'tesseract';
+  let ocrResults = { text: '', blocks: [] };
+
+  if (ocrService === 'tesseract') {
+    ocrResults = await performTesseractOCR(imageSrc, languageMapping[serviceSettings.sourceLanguage] || 'eng');
+  } else if (ocrService === 'googleCloudVision') {
+    ocrResults = await performGoogleOCR(imageSrc);
+  } else {
+    console.error('Unsupported OCR service:', ocrService);
+  }
+
+  // Process OCR results
+  const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
+  const fontSize = estimateFontSize(ocrResults.blocks);
+  console.log('OCR Results:', processedText);
+  console.log('Font Size:', fontSize);
+  console.log(ocrResults.blocks);
+  console.log(imageSrc);
+  return { text: processedText, blocks: ocrResults.blocks, fontSize: fontSize };
+}
+
+// Translate text using Google Translate API
 async function translateWithGoogle(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
@@ -187,6 +292,7 @@ async function translateWithGoogle(text, forcedSourceLang = null, forcedTargetLa
   }
 }
 
+// Translate text using DeepL API
 async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
@@ -228,8 +334,8 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
   }
 }
 
+// Translate text using the selected translation service
 async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
-  // Use the selected translation service
   const translationService = serviceSettings.translationService || 'deepl';
 
   if (translationService === 'deepl') {
@@ -238,26 +344,8 @@ async function translateText(text, forcedSourceLang = null, forcedTargetLang = n
     return translateWithGoogle(text, forcedSourceLang, forcedTargetLang);
   } else {
     console.error('Unknown translation service:', translationService);
-    return text; // Return original text if service is unknown
+    return text; // Return original text if service is somehow unknown
   }
-}
-
-if (!window.listenerRegistered) {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log("Offscreen received message:", message.action);
-
-    if (message.action === "detectObjects") {
-      // Check if service settings are included
-      if (message.serviceSettings) {
-        serviceSettings = message.serviceSettings;
-        console.log("Using service settings:", serviceSettings);
-      }
-      detectObjects(message.imageData, message.requestId);
-    }
-
-    return false;
-  });
-  window.listenerRegistered = true;
 }
 
 // Main object detection function
@@ -359,12 +447,6 @@ function preprocessImage(img) {
   return new ort.Tensor('float32', inputTensor, [1, 3, targetHeight, targetWidth]);
 }
 
-const id2label = {
-  0: "bubble",
-  1: "text_bubble",
-  2: "text_free",
-};
-
 async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   const logits = outputs.logits.data; // Classification logits
   const predBoxes = outputs.pred_boxes.data; // Bounding box predictions
@@ -413,32 +495,22 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
     const { x1, y1, x2, y2, classIndex } = detection;
     const w = x2 - x1;
     const h = y2 - y1;
-    let w2 = w * 4;
-    let h2 = h * 3;
+    const wScale = 3;
+    const hScale = 3;
 
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w2, h2, classIndex);
-
-    try {
-      const ocrService = serviceSettings.ocrService || 'tesseract';
-      if (ocrService === 'tesseract') {
-        // Use Tesseract for OCR
-        const { data: { text, blocks } } = await tesseract_worker.recognize(subsectionImg.src, {}, { blocks: true });
-        detection.text = text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-      } else if (ocrService === 'googleCloudVision') {
-        // Use Google Cloud Vision API for OCR
-        const visionResults = await fetchGoogleCloudVisionOCR(subsectionImg.src);
-        detection.text = visionResults.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-      }
-    } catch (error) {
-      console.error('Error recognizing text:', error);
-      detection.text = ''; // Fallback to empty text
-      continue;
-    }
+    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * wScale, h * hScale, classIndex);
 
     try {
+      const ocrResults = await performOCR(subsectionImg.src, classIndex);
+      detection.text = ocrResults.text;
+      detection.blocks = ocrResults.blocks;
+      detection.fontSize = ocrResults.fontSize / hScale;
+
       detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
     } catch (error) {
-      detection.translatedText = detection.text; // Fallback to original text if translation fails
+      console.error('Error processing OCR or translation:', error);
+      detection.text = '';
+      detection.translatedText = '';
     }
 
     detection.subsectionImg = subsectionImg.src;

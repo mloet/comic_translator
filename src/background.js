@@ -31,6 +31,106 @@ chrome.storage.sync.get([
 const pendingRequests = new Map();
 let requestId = 0;
 
+// Register listeners
+if (!globalThis.listenersRegistered) {
+  // Handle messages from popup.js or content.js
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+    // Handle settings updates from popup
+    if (message.action === "updateserviceSettings") {
+      // Update settings
+      if (message.settings.googleApiKey !== undefined) {
+        serviceSettings.googleApiKey = message.settings.googleApiKey;
+      }
+      if (message.settings.deeplApiKey !== undefined) {
+        serviceSettings.deeplApiKey = message.settings.deeplApiKey;
+      }
+      if (message.settings.ocrService !== undefined) {
+        serviceSettings.ocrService = message.settings.ocrService;
+      }
+      if (message.settings.translationService !== undefined) {
+        serviceSettings.translationService = message.settings.translationService;
+      }
+      if (message.settings.sourceLanguage !== undefined) {
+        serviceSettings.sourceLanguage = message.settings.sourceLanguage;
+      }
+      if (message.settings.targetLanguage !== undefined) {
+        serviceSettings.targetLanguage = message.settings.targetLanguage;
+      }
+
+      console.log('Service settings updated:', serviceSettings);
+
+      return false;
+    }
+
+    // Handle detection request from webpage content script
+    if (message.action === "initWebpageDetection") {
+      const currentRequestId = requestId++;
+      console.log(`Received detection request from content script in tab ${sender.tab?.id}, assigned ID ${currentRequestId}`);
+
+      // Store source tab ID and image ID
+      pendingRequests.set(currentRequestId, {
+        sourceTabId: sender.tab?.id,
+        imageId: message.imageId,
+        source: 'content'
+      });
+
+      // Process the detection request with current service settings
+      processDetectionRequest(message.imageData, currentRequestId, serviceSettings);
+
+      // No need for a synchronous response
+      return false;
+    }
+  });
+
+  // Set up detection results listener from offscreen.js
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Handle detection results from offscreen document
+    if (message.action === "detectionResults") {
+      console.log(`Received detection results for request ${message.requestId}`);
+
+      // Get the request data using requestId
+      const requestData = pendingRequests.get(message.requestId);
+
+      if (!requestData) {
+        console.warn(`No request data found for request ${message.requestId}`);
+        return false;
+      }
+
+      const { callback, sourceTabId, imageId, source } = requestData;
+
+      // If from content script (has tab ID and image ID)
+      if (source === 'content' && sourceTabId && imageId) {
+        console.log(`Sending results to content script in tab ${sourceTabId} for image ${imageId}`);
+
+        chrome.tabs.sendMessage(sourceTabId, {
+          action: "detectionCompleted",
+          imageId: imageId,
+          results: message.results,
+          error: message.error
+        }).catch(error => {
+          console.error(`Error sending results to tab ${sourceTabId}:`, error);
+        });
+      }
+
+      // Clean up the request data
+      pendingRequests.delete(message.requestId);
+
+      return false;
+    }
+  });
+
+  // Listen for keyboard shortcuts
+  chrome.commands.onCommand.addListener((command) => {
+    if (command === "open-popup") {
+      // Open the popup
+      chrome.action.openPopup();
+    }
+  });
+
+  globalThis.listenersRegistered = true;
+}
+
 // Ensure offscreen document is active
 async function ensureOffscreenDocument() {
   try {
@@ -57,93 +157,6 @@ async function ensureOffscreenDocument() {
     return false;
   }
 }
-
-// Handle messages from popup.js or content.js
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-  // Handle settings updates from popup
-  if (message.action === "updateserviceSettings") {
-    // Update settings
-    if (message.settings.googleApiKey !== undefined) {
-      serviceSettings.googleApiKey = message.settings.googleApiKey;
-    }
-    if (message.settings.deeplApiKey !== undefined) {
-      serviceSettings.deeplApiKey = message.settings.deeplApiKey;
-    }
-    if (message.settings.ocrService !== undefined) {
-      serviceSettings.ocrService = message.settings.ocrService;
-    }
-    if (message.settings.translationService !== undefined) {
-      serviceSettings.translationService = message.settings.translationService;
-    }
-    if (message.settings.sourceLanguage !== undefined) {
-      serviceSettings.sourceLanguage = message.settings.sourceLanguage;
-    }
-    if (message.settings.targetLanguage !== undefined) {
-      serviceSettings.targetLanguage = message.settings.targetLanguage;
-    }
-
-    console.log('Service settings updated:', serviceSettings);
-
-    return false;
-  }
-
-  // Handle detection request from webpage content script
-  if (message.action === "initWebpageDetection") {
-    const currentRequestId = requestId++;
-    console.log(`Received detection request from content script in tab ${sender.tab?.id}, assigned ID ${currentRequestId}`);
-
-    // Store source tab ID and image ID
-    pendingRequests.set(currentRequestId, {
-      sourceTabId: sender.tab?.id,
-      imageId: message.imageId,
-      source: 'content'
-    });
-
-    // Process the detection request with current service settings
-    processDetectionRequest(message.imageData, currentRequestId, serviceSettings);
-
-    // No need for a synchronous response
-    return false;
-  }
-});
-
-// Set up detection results listener from offscreen.js
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle detection results from offscreen document
-  if (message.action === "detectionResults") {
-    console.log(`Received detection results for request ${message.requestId}`);
-
-    // Get the request data using requestId
-    const requestData = pendingRequests.get(message.requestId);
-
-    if (!requestData) {
-      console.warn(`No request data found for request ${message.requestId}`);
-      return false;
-    }
-
-    const { callback, sourceTabId, imageId, source } = requestData;
-
-    // If from content script (has tab ID and image ID)
-    if (source === 'content' && sourceTabId && imageId) {
-      console.log(`Sending results to content script in tab ${sourceTabId} for image ${imageId}`);
-
-      chrome.tabs.sendMessage(sourceTabId, {
-        action: "detectionCompleted",
-        imageId: imageId,
-        results: message.results,
-        error: message.error
-      }).catch(error => {
-        console.error(`Error sending results to tab ${sourceTabId}:`, error);
-      });
-    }
-
-    // Clean up the request data
-    pendingRequests.delete(message.requestId);
-
-    return false;
-  }
-});
 
 // Process detection request by forwarding to offscreen document
 async function processDetectionRequest(imageData, requestId, settings) {
@@ -200,11 +213,3 @@ function handleDetectionError(requestId, errorMessage) {
   // Clean up the request data
   pendingRequests.delete(requestId);
 }
-
-// Listen for keyboard shortcuts
-chrome.commands.onCommand.addListener((command) => {
-  if (command === "open-popup") {
-    // Open the popup
-    chrome.action.openPopup();
-  }
-});
