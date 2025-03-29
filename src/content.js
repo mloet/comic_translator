@@ -29,12 +29,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleDetectionResults(message.imageId, message.results, message.error);
     return false;
   }
-
-  // Handle context menu detection request
-  if (message.action === "contextMenuDetection") {
-    handleContextMenuDetection(message.imageUrl);
-    return false;
-  }
 });
 
 // Main initialization function
@@ -465,34 +459,6 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
 
   // Append the detection container to the main container
   container.appendChild(detectionContainer);
-}
-// Handle context menu detection request
-function handleContextMenuDetection(imageUrl) {
-  // Find the image with this URL
-  const images = document.querySelectorAll('img');
-  let targetImage = null;
-
-  for (const img of images) {
-    if (img.src === imageUrl) {
-      targetImage = img;
-      break;
-    }
-  }
-
-  if (!targetImage) {
-    console.error('Image not found for right-click detection:', imageUrl);
-    return;
-  }
-
-  // Process the image if needed
-  if (!processedImages.has(targetImage)) {
-    processImage(targetImage);
-  }
-
-  // Trigger detection if we have the elements
-  if (targetImage.detectorElements) {
-    targetImage.detectorElements.button.click();
-  }
 }
 
 // Set up mutation observer to handle dynamically added images

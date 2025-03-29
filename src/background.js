@@ -1,5 +1,36 @@
 // background.js - Service worker that manages the offscreen document
 
+// Storage for service settings
+let serviceSettings = {
+  googleApiKey: '',
+  deeplApiKey: '',
+  ocrService: 'tesseract',
+  translationService: 'deepl',
+  sourceLanguage: 'AUTO',
+  targetLanguage: 'EN'
+};
+
+// Load saved settings when background script starts
+chrome.storage.sync.get([
+  'googleApiKey',
+  'deeplApiKey',
+  'ocrService',
+  'translationService',
+  'sourceLanguage',
+  'targetLanguage'
+], function (items) {
+  if (items.googleApiKey) serviceSettings.googleApiKey = items.googleApiKey;
+  if (items.deeplApiKey) serviceSettings.deeplApiKey = items.deeplApiKey;
+  if (items.ocrService) serviceSettings.ocrService = items.ocrService;
+  if (items.translationService) serviceSettings.translationService = items.translationService;
+  if (items.sourceLanguage) serviceSettings.sourceLanguage = items.sourceLanguage;
+  if (items.targetLanguage) serviceSettings.targetLanguage = items.targetLanguage;
+});
+
+// Global map to store pendingRequests with their callbacks and metadata
+const pendingRequests = new Map();
+let requestId = 0;
+
 // Ensure offscreen document is active
 async function ensureOffscreenDocument() {
   try {
@@ -27,9 +58,55 @@ async function ensureOffscreenDocument() {
   }
 }
 
-// Global map to store pendingRequests with their callbacks and metadata
-const pendingRequests = new Map();
-let requestId = 0;
+// Handle messages from popup.js or content.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+  // Handle settings updates from popup
+  if (message.action === "updateserviceSettings") {
+    // Update settings
+    if (message.settings.googleApiKey !== undefined) {
+      serviceSettings.googleApiKey = message.settings.googleApiKey;
+    }
+    if (message.settings.deeplApiKey !== undefined) {
+      serviceSettings.deeplApiKey = message.settings.deeplApiKey;
+    }
+    if (message.settings.ocrService !== undefined) {
+      serviceSettings.ocrService = message.settings.ocrService;
+    }
+    if (message.settings.translationService !== undefined) {
+      serviceSettings.translationService = message.settings.translationService;
+    }
+    if (message.settings.sourceLanguage !== undefined) {
+      serviceSettings.sourceLanguage = message.settings.sourceLanguage;
+    }
+    if (message.settings.targetLanguage !== undefined) {
+      serviceSettings.targetLanguage = message.settings.targetLanguage;
+    }
+
+    console.log('Service settings updated:', serviceSettings);
+
+    return false;
+  }
+
+  // Handle detection request from webpage content script
+  if (message.action === "initWebpageDetection") {
+    const currentRequestId = requestId++;
+    console.log(`Received detection request from content script in tab ${sender.tab?.id}, assigned ID ${currentRequestId}`);
+
+    // Store source tab ID and image ID
+    pendingRequests.set(currentRequestId, {
+      sourceTabId: sender.tab?.id,
+      imageId: message.imageId,
+      source: 'content'
+    });
+
+    // Process the detection request with current service settings
+    processDetectionRequest(message.imageData, currentRequestId, serviceSettings);
+
+    // No need for a synchronous response
+    return false;
+  }
+});
 
 // Set up detection results listener from offscreen.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -64,61 +141,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Clean up the request data
     pendingRequests.delete(message.requestId);
 
-    return false;
-  }
-});
-
-// Handle messages from popup.js or content.js
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-  // Handle settings updates from popup
-  if (message.action === "updateserviceSettings") {
-    // Update settings
-    if (message.settings.apiKey !== undefined) {
-      serviceSettings.apiKey = message.settings.apiKey;
-    }
-    if (message.settings.ocrService !== undefined) {
-      serviceSettings.ocrService = message.settings.ocrService;
-    }
-    if (message.settings.translationService !== undefined) {
-      serviceSettings.translationService = message.settings.translationService;
-    }
-    if (message.settings.sourceLanguage !== undefined) {
-      serviceSettings.sourceLanguage = message.settings.sourceLanguage;
-    }
-    if (message.settings.targetLanguage !== undefined) {
-      serviceSettings.targetLanguage = message.settings.targetLanguage;
-    }
-
-    console.log('Service settings updated:', serviceSettings);
-
-    // Forward settings to offscreen document
-    chrome.runtime.sendMessage({
-      action: "updateserviceSettings",
-      settings: serviceSettings
-    }).catch(error => {
-      console.error('Error forwarding settings to offscreen document:', error);
-    });
-
-    return false;
-  }
-
-  // Handle detection request from webpage content script
-  if (message.action === "initWebpageDetection") {
-    const currentRequestId = requestId++;
-    console.log(`Received detection request from content script in tab ${sender.tab?.id}, assigned ID ${currentRequestId}`);
-
-    // Store source tab ID and image ID
-    pendingRequests.set(currentRequestId, {
-      sourceTabId: sender.tab?.id,
-      imageId: message.imageId,
-      source: 'content'
-    });
-
-    // Process the detection request with current service settings
-    processDetectionRequest(message.imageData, currentRequestId, serviceSettings);
-
-    // No need for a synchronous response
     return false;
   }
 });
@@ -179,50 +201,10 @@ function handleDetectionError(requestId, errorMessage) {
   pendingRequests.delete(requestId);
 }
 
-// Set up context menu (right-click option)
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "detectTextInImage",
-    title: "Detect Text Bubbles",
-    contexts: ["image"],
-  });
-});
-
-// Handle context menu clicks
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "detectTextInImage" && info.srcUrl && tab?.id) {
-    // Send message to content script to handle this specific image
-    chrome.tabs.sendMessage(tab.id, {
-      action: "contextMenuDetection",
-      imageUrl: info.srcUrl
-    }).catch(error => {
-      console.error(`Error sending context menu action to tab ${tab.id}:`, error);
-    });
-  }
-});
-
 // Listen for keyboard shortcuts
 chrome.commands.onCommand.addListener((command) => {
   if (command === "open-popup") {
     // Open the popup
     chrome.action.openPopup();
   }
-});
-
-// Storage for service settings
-let serviceSettings = {
-  apiKey: '',
-  ocrService: 'tesseract',
-  translationService: 'deepl',
-  sourceLanguage: 'AUTO',
-  targetLanguage: 'EN'
-};
-
-// Load saved settings when background script starts
-chrome.storage.sync.get(['apiKey', 'ocrService', 'translationService', 'sourceLanguage', 'targetLanguage'], function (items) {
-  if (items.apiKey) serviceSettings.apiKey = items.apiKey;
-  if (items.ocrService) serviceSettings.ocrService = items.ocrService;
-  if (items.translationService) serviceSettings.translationService = items.translationService;
-  if (items.sourceLanguage) serviceSettings.sourceLanguage = items.sourceLanguage;
-  if (items.targetLanguage) serviceSettings.targetLanguage = items.targetLanguage;
 });

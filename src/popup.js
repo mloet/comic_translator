@@ -1,4 +1,3 @@
-
 // popup.js - handles interaction with the translation settings popup
 
 // Wait for DOM to be fully loaded before attaching event listeners
@@ -8,112 +7,124 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initializePopup() {
   // Get UI elements
+  const googleApiKeyInput = document.getElementById('googleApiKey');
+  const deeplApiKeyInput = document.getElementById('deeplApiKey');
+  const saveGoogleApiKeyButton = document.getElementById('saveGoogleApiKey');
+  const saveDeepLApiKeyButton = document.getElementById('saveDeepLApiKey');
   const ocrServiceSelect = document.getElementById('ocrService');
   const translationServiceSelect = document.getElementById('translationService');
-  const apiKeyInput = document.getElementById('apiKey');
-  const saveApiKeyButton = document.getElementById('saveApiKey');
   const sourceLanguageSelect = document.getElementById('sourceLanguage');
   const targetLanguageSelect = document.getElementById('targetLanguage');
 
   // Load saved settings
   loadSavedSettings();
 
+  // Save Google API key
+  saveGoogleApiKeyButton.addEventListener('click', () => saveApiKey('googleApiKey', googleApiKeyInput.value));
+
+  // Save DeepL API key
+  saveDeepLApiKeyButton.addEventListener('click', () => saveApiKey('deeplApiKey', deeplApiKeyInput.value));
+
   // Save OCR and translation service settings
   ocrServiceSelect.addEventListener('change', saveServiceSettings);
   translationServiceSelect.addEventListener('change', saveServiceSettings);
 
-  // Save API key
-  saveApiKeyButton.addEventListener('click', saveApiKey);
-
   // Save language settings
   sourceLanguageSelect.addEventListener('change', saveLanguageSettings);
   targetLanguageSelect.addEventListener('change', saveLanguageSettings);
+}
 
-  function saveServiceSettings() {
-    const ocrService = ocrServiceSelect.value;
-    const translationService = translationServiceSelect.value;
+function saveApiKey(keyName, apiKeyValue) {
+  const trimmedApiKey = apiKeyValue.trim();
 
-    chrome.storage.sync.set({
-      ocrService: ocrService,
-      translationService: translationService
-    }, () => {
-      showStatus('Service settings saved!', 'green');
-
-      // Send message to background script
-      chrome.runtime.sendMessage({
-        action: 'updateserviceSettings',
-        settings: {
-          ocrService: ocrService,
-          translationService: translationService
-        }
-      }).catch(error => {
-        console.error('Error sending service settings:', error);
-      });
-    });
+  if (!trimmedApiKey) {
+    showStatus(`${keyName} cannot be empty!`, 'red');
+    return;
   }
 
-  function saveApiKey() {
-    const apiKey = apiKeyInput.value.trim();
+  chrome.storage.sync.set({ [keyName]: trimmedApiKey }, () => {
+    showStatus(`${keyName} saved!`, 'green');
 
-    if (!apiKey) {
-      showStatus('API key cannot be empty!', 'red');
-      return;
-    }
-
-    chrome.storage.sync.set({ apiKey: apiKey }, () => {
-      showStatus('API key saved!', 'green');
-
-      // Send message to background script
-      chrome.runtime.sendMessage({
-        action: 'updateserviceSettings',
-        settings: { apiKey: apiKey }
-      }).catch(error => {
-        console.error('Error sending API key:', error);
-      });
+    // Send message to background script
+    chrome.runtime.sendMessage({
+      action: 'updateserviceSettings',
+      settings: { [keyName]: trimmedApiKey }
+    }).catch(error => {
+      console.error(`Error sending ${keyName}:`, error);
     });
-  }
+  });
+}
 
-  function saveLanguageSettings() {
-    const sourceLanguage = sourceLanguageSelect.value;
-    const targetLanguage = targetLanguageSelect.value;
+function saveServiceSettings() {
+  const ocrService = document.getElementById('ocrService').value;
+  const translationService = document.getElementById('translationService').value;
 
-    chrome.storage.sync.set({
-      sourceLanguage: sourceLanguage,
-      targetLanguage: targetLanguage
-    }, () => {
-      showStatus('Language settings saved!', 'green');
+  chrome.storage.sync.set({
+    ocrService: ocrService,
+    translationService: translationService
+  }, () => {
+    showStatus('Service settings saved!', 'green');
 
-      // Send message to background script
-      chrome.runtime.sendMessage({
-        action: 'updateserviceSettings',
-        settings: {
-          sourceLanguage: sourceLanguage,
-          targetLanguage: targetLanguage
-        }
-      }).catch(error => {
-        console.error('Error sending language settings:', error);
-      });
+    // Send message to background script
+    chrome.runtime.sendMessage({
+      action: 'updateserviceSettings',
+      settings: {
+        ocrService: ocrService,
+        translationService: translationService
+      }
+    }).catch(error => {
+      console.error('Error sending service settings:', error);
     });
-  }
+  });
+}
+
+function saveLanguageSettings() {
+  const sourceLanguage = document.getElementById('sourceLanguage').value;
+  const targetLanguage = document.getElementById('targetLanguage').value;
+
+  chrome.storage.sync.set({
+    sourceLanguage: sourceLanguage,
+    targetLanguage: targetLanguage
+  }, () => {
+    showStatus('Language settings saved!', 'green');
+
+    // Send message to background script
+    chrome.runtime.sendMessage({
+      action: 'updateserviceSettings',
+      settings: {
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage
+      }
+    }).catch(error => {
+      console.error('Error sending language settings:', error);
+    });
+  });
 }
 
 function loadSavedSettings() {
   chrome.storage.sync.get([
-    'apiKey',
+    'googleApiKey',
+    'deeplApiKey',
     'ocrService',
     'translationService',
     'sourceLanguage',
     'targetLanguage'
   ], function (items) {
-    const apiKeyInput = document.getElementById('apiKey');
+    const googleApiKeyInput = document.getElementById('googleApiKey');
+    const deeplApiKeyInput = document.getElementById('deeplApiKey');
     const ocrServiceSelect = document.getElementById('ocrService');
     const translationServiceSelect = document.getElementById('translationService');
     const sourceLanguageSelect = document.getElementById('sourceLanguage');
     const targetLanguageSelect = document.getElementById('targetLanguage');
 
-    // Load API key
-    if (items.apiKey) {
-      apiKeyInput.value = items.apiKey;
+    // Load Google API key
+    if (items.googleApiKey) {
+      googleApiKeyInput.value = items.googleApiKey;
+    }
+
+    // Load DeepL API key
+    if (items.deeplApiKey) {
+      deeplApiKeyInput.value = items.deeplApiKey;
     }
 
     // Load OCR service

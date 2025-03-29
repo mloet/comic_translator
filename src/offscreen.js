@@ -91,7 +91,7 @@ async function initializeWorker(lang = 'eng') {
 }
 
 async function fetchGoogleCloudVisionOCR(base64Image) {
-  const apiKey = serviceSettings.apiKey;
+  const apiKey = serviceSettings.googleApiKey; // Use googleApiKey instead of apiKey
   if (!apiKey) {
     console.error('Google Cloud Vision API key is missing');
     return '';
@@ -115,7 +115,6 @@ async function fetchGoogleCloudVisionOCR(base64Image) {
 
     const data = await response.json();
 
-    // More robust check for text annotations
     if (!data.responses || !data.responses[0] || !data.responses[0].textAnnotations ||
       !data.responses[0].textAnnotations[0]) {
       console.log('No text detected by Google Cloud Vision API');
@@ -125,45 +124,38 @@ async function fetchGoogleCloudVisionOCR(base64Image) {
     return data.responses[0].textAnnotations[0].description;
   } catch (error) {
     console.error('Error fetching Google Cloud Vision OCR results:', error);
-    return ''; // Consider returning an error flag or object instead
+    return '';
   }
 }
 
 // Global service settings
+
 let serviceSettings = {
-  apiKey: '',
-  ocrService: 'tesseract', // Default to tesseract
+  googleApiKey: '',
+  deeplApiKey: '',
+  ocrService: 'tesseract',
   translationService: 'deepl',
   sourceLanguage: 'AUTO',
   targetLanguage: 'EN'
 };
 
-async function translateWithGoogleAPI(text, forcedSourceLang = null, forcedTargetLang = null) {
+async function translateWithGoogle(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
-    return text; // Return the original text
+    return text;
   }
 
-  // Use provided languages or fall back to global settings
   const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
   const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
-  const apiKey = serviceSettings.apiKey;
+  const apiKey = serviceSettings.googleApiKey; // Use googleApiKey instead of apiKey
 
-  // Skip translation if API key is missing or languages are the same
   if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
     console.log('Translation skipped: missing API key or same language');
     return text;
   }
 
-  // Convert language codes to Google Translate format
   const googleSourceLang = sourceLang === 'AUTO' ? '' : sourceLang.toLowerCase();
   const googleTargetLang = targetLang.toLowerCase();
-
-  console.log('Google Translation request:', {
-    text,
-    sourceLang: googleSourceLang || 'auto',
-    targetLang: googleTargetLang,
-  });
 
   try {
     const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
@@ -191,32 +183,24 @@ async function translateWithGoogleAPI(text, forcedSourceLang = null, forcedTarge
     }
   } catch (error) {
     console.error('Google Translation error:', error);
-    return text; // Fallback to the original text if translation fails
+    return text;
   }
 }
 
 async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLang = null) {
   if (!text || text.trim() === '') {
     console.error('Translation error: Text is empty');
-    return text; // Return the original text
+    return text;
   }
 
-  // Use provided languages or fall back to global settings
   const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
   const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
-  const apiKey = serviceSettings.apiKey;
+  const apiKey = serviceSettings.deeplApiKey; // Use deeplApiKey instead of apiKey
 
-  // Skip translation if API key is missing or languages are the same
   if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
     console.log('Translation skipped: missing API key or same language');
     return text;
   }
-
-  console.log('DeepL Translation request:', {
-    text,
-    sourceLang,
-    targetLang,
-  });
 
   try {
     const response = await fetch("https://api-free.deepl.com/v2/translate", {
@@ -237,10 +221,10 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
     }
 
     const data = await response.json();
-    return data.translations[0].text; // Extract the translated text
+    return data.translations[0].text;
   } catch (error) {
     console.error('DeepL Translation error:', error);
-    return text; // Fallback to the original text if translation fails
+    return text;
   }
 }
 
@@ -251,7 +235,7 @@ async function translateText(text, forcedSourceLang = null, forcedTargetLang = n
   if (translationService === 'deepl') {
     return translateWithDeepL(text, forcedSourceLang, forcedTargetLang);
   } else if (translationService === 'googleTranslate') {
-    return translateWithGoogleAPI(text, forcedSourceLang, forcedTargetLang);
+    return translateWithGoogle(text, forcedSourceLang, forcedTargetLang);
   } else {
     console.error('Unknown translation service:', translationService);
     return text; // Return original text if service is unknown
@@ -269,13 +253,6 @@ if (!window.listenerRegistered) {
         console.log("Using service settings:", serviceSettings);
       }
       detectObjects(message.imageData, message.requestId);
-    }
-
-    if (message.action === "updateserviceSettings") {
-      serviceSettings = message.settings;
-      console.log("Updated service settings:", serviceSettings);
-      console.log("Source language set to:", serviceSettings.sourceLanguage);
-      console.log("OCR service set to:", serviceSettings.ocrService);
     }
 
     return false;
@@ -458,8 +435,12 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
       continue;
     }
 
-    detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage).toUpperCase();;
-    console.log(detection.translatedText);
+    try {
+      detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
+    } catch (error) {
+      detection.translatedText = detection.text; // Fallback to original text if translation fails
+    }
+
     detection.subsectionImg = subsectionImg.src;
   }
 
@@ -488,13 +469,11 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
   let processedSubsection;
 
   if (classIndex == 2) { // text_free class
-    console.log('text_free')
     processedSubsection = resizedSubsection.grey();
     processedSubsection = processedSubsection.gaussianFilter({ radius: 6 });
     // processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
     processedSubsection = processedSubsection.dilate({ iterations: 2 });
   } else {
-    console.log('bubble')
     processedSubsection = resizedSubsection.grey();
     processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
   }
