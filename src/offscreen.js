@@ -1,5 +1,5 @@
 import * as ort from "onnxruntime-web";
-import Tesseract from 'tesseract.js';
+import Tesseract, { PSM } from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
 
 // Global service settings
@@ -120,7 +120,6 @@ async function initializeWorker(lang = 'eng') {
   await tesseract_worker.setParameters({
     preserve_interword_spaces: '1',
     tessedit_char_blacklist: '#$¥%£&©®<=>@[\\]^_`{|}~0123456789¢€₹₩₽₺±×÷∞≈≠…•§¶°†‡‘’“”‹›«»–—‒™℠µ←→↑↓↔↕☑☐☒★☆',
-    psm: 6
   });
 
   console.log('Tesseract worker created with language:', lang);
@@ -128,18 +127,87 @@ async function initializeWorker(lang = 'eng') {
 }
 
 // Perform OCR using Tesseract.js
-async function performTesseractOCR(imageSrc, lang = 'eng') {
+async function performTesseractOCR(image, classIndex, lang = 'eng') {
   if (!tesseract_worker) {
     tesseract_worker = await initializeWorker(lang);
   }
 
-  try {
-    const { data: { text, blocks } } = await tesseract_worker.recognize(imageSrc, {}, { blocks: true });
-    return { text, blocks };
-  } catch (error) {
-    console.error('Error performing OCR:', error);
-    return { text: '', blocks: [] };
+  const resizedImage = image.resize({
+    factor: 3,
+  });
+
+  let processedSubsection;
+  processedSubsection = resizedImage.grey();
+  // processedSubsection = applyRadialBlur(processedSubsection);
+  if (classIndex == 2) processedSubsection = processedSubsection.gaussianFilter({ radius: 6 });
+
+  const { data: { text, blocks } } = await tesseract_worker.recognize(processedSubsection.toDataURL(), { tessedit_pageseg_mode: PSM.SINGLE_BLOCK }, { blocks: true });
+  const lines = blocks.map((block) => block.paragraphs.map((paragraph) => paragraph.lines)).flat(2);
+
+  processedSubsection = processedSubsection.mask({ algorithm: 'otsu' });
+
+  if (classIndex == 2) {
+    processedSubsection = processedSubsection.dilate({ iterations: 2 });
+    processedSubsection = processedSubsection.erode({ iterations: 2 });
   }
+
+  const lineTexts = [];
+  const lineBoundingBoxes = [];
+  for (const line of lines) {
+    const { bbox } = line;
+    const rectangle = {
+      top: bbox.y0,
+      left: bbox.x0,
+      width: bbox.x1 - bbox.x0,
+      height: bbox.y1 - bbox.y0,
+    };
+    const { data: { text: lineText, blocks: lineBlocks } } = await tesseract_worker.recognize(processedSubsection.toDataURL(), { tessedit_pageseg_mode: PSM.SINGLE_LINE, rectangle: rectangle }, { blocks: true });
+    // const words = lineBlocks.map((block) => block.paragraphs.map((paragraph) => paragraph.lines.map((line) => line.words))).flat(3);
+    // const highConfidenceWords = words.filter(word => word.confidence >= 0);
+    // const filteredLineText = highConfidenceWords.map(word => word.text).join(' ');
+
+    // console.log(text);
+    // console.log('Processed subsection:', processedSubsection.toDataURL());
+
+    if (lineText.trim()) {
+      lineTexts.push(lineText);
+      lineBoundingBoxes.push(bbox);
+    }
+  }
+
+  const fontSize = image.height / lines.length
+
+  const combinedText = lineTexts.join('\n');
+  return { text: combinedText, blocks, fontSize };
+}
+
+// Apply a radial blur filter
+function applyRadialBlur(image) {
+  const width = image.width;
+  const height = image.height;
+
+  // Create a radial gradient mask
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const maxDistance = Math.sqrt(centerX ** 2 + centerY ** 2);
+
+  const mask = new ImageJS.Image(width, height, { kind: 'GREY' });
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+      const intensity = 1 - Math.min(distance / maxDistance, 1); // Normalize to [0, 1]
+      mask.setPixelXY(x, y, Math.round(intensity * 255)); // Set grayscale value
+    }
+  }
+
+  // Apply the mask to the image
+  const maskedImage = image.multiplyImage(mask);
+
+  // Apply a Gaussian blur to the masked image
+  const blurredImage = maskedImage.gaussianFilter({ radius: 10 });
+
+  return blurredImage;
 }
 
 // Fetch OCR results from Google Cloud Vision API
@@ -221,12 +289,12 @@ function estimateFontSize(blocks) {
   return averageFontSize;
 }
 
-async function performOCR(imageSrc, classIndex) {
+async function performOCR(image, classIndex) {
   const ocrService = serviceSettings.ocrService || 'tesseract';
   let ocrResults = { text: '', blocks: [] };
 
   if (ocrService === 'tesseract') {
-    ocrResults = await performTesseractOCR(imageSrc, languageMapping[serviceSettings.sourceLanguage] || 'eng');
+    ocrResults = await performTesseractOCR(image, classIndex, languageMapping[serviceSettings.sourceLanguage] || 'eng');
   } else if (ocrService === 'googleCloudVision') {
     ocrResults = await performGoogleOCR(imageSrc);
   } else {
@@ -235,12 +303,12 @@ async function performOCR(imageSrc, classIndex) {
 
   // Process OCR results
   const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-  const fontSize = estimateFontSize(ocrResults.blocks);
-  console.log('OCR Results:', processedText);
+  // const fontSize = estimateFontSize(ocrResults.blocks);
+  // console.log('OCR Results:', processedText);
   // console.log('Font Size:', fontSize);
-  console.log(ocrResults.blocks);
-  console.log(imageSrc);
-  return { text: processedText, blocks: ocrResults.blocks, fontSize: fontSize };
+  // console.log(ocrResults.blocks);
+  // console.log(imageSrc);
+  return { text: processedText, blocks: ocrResults.blocks, fontSize: ocrResults.fontSize };
 }
 
 // Translate text using Google Translate API
@@ -449,6 +517,7 @@ function preprocessImage(img) {
 }
 
 async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
+  const image = await ImageJS.load(img.src);
   const logits = outputs.logits.data; // Classification logits
   const predBoxes = outputs.pred_boxes.data; // Bounding box predictions
   const numQueries = outputs.logits.dims[1]; // Number of object queries
@@ -498,11 +567,17 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
     const h = y2 - y1;
     const wScale = 3;
     const hScale = 3;
+    const subsection = image.crop({
+      x: Math.max(0, x1),
+      y: Math.max(0, y1),
+      width: Math.min(w, image.width - x1),
+      height: Math.min(h, image.height - y1),
+    });
 
-    const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * wScale, h * hScale, classIndex);
+    // const subsectionImg = await preprocessSubsection(img, x1, y1, w, h, w * wScale, h * hScale, classIndex);
 
     try {
-      const ocrResults = await performOCR(subsectionImg.src, classIndex);
+      const ocrResults = await performOCR(subsection, classIndex);
       detection.text = ocrResults.text;
       detection.blocks = ocrResults.blocks;
       detection.fontSize = ocrResults.fontSize / hScale;
@@ -514,7 +589,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
       detection.translatedText = '';
     }
 
-    detection.subsectionImg = subsectionImg.src;
+    // detection.subsectionImg = subsectionImg.src;
   }
 
   return filteredDetections;
@@ -545,10 +620,11 @@ async function preprocessSubsection(img, x, y, w, h, targetWidth, targetHeight, 
     processedSubsection = resizedSubsection.grey();
     processedSubsection = processedSubsection.gaussianFilter({ radius: 6 });
     // processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
-    processedSubsection = processedSubsection.dilate({ iterations: 2 });
+    // processedSubsection = processedSubsection.dilate({ iterations: 2 });
   } else {
     processedSubsection = resizedSubsection.grey();
-    processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
+    processedSubsection = processedSubsection.gaussianFilter({ radius: 6 });
+    // processedSubsection = processedSubsection.mask(processedSubsection.getThreshold());
   }
   // logImageForDebug(processedSubsection, 'Processed Subsection');
 

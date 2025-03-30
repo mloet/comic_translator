@@ -407,9 +407,9 @@ function handleDetectionResults(imageId, results, error) {
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
   const { x1, y1, x2, y2, text, translatedText, subsectionImg, classIndex, classLabel } = detection;
-  console.log('text:', translatedText);
-  console.log('Label', classIndex, classLabel);
-  console.log('Subsection Image', subsectionImg);
+  // console.log('text:', translatedText);
+  // console.log('Label', classIndex, classLabel);
+  // console.log('Subsection Image', subsectionImg);
 
   // Skip invalid detections
   if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
@@ -429,7 +429,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
 
   // Estimate font size and scale it
   const estimatedFontSize = detection.fontSize || boxHeight; // Use detection's font size or fallback to box height
-  const scaledFontSize = estimatedFontSize * Math.min(scaleX, scaleY) * 0.75;
+  const scaledFontSize = estimatedFontSize * Math.min(scaleX, scaleY);
   // console.log('Scaled font size:', scaledFontSize);
 
   // Create a container for the detection
