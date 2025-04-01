@@ -2,6 +2,7 @@
 
 // Global variables to track processed images and detection results
 const processedImages = new Set();
+const processingImages = new Map(); // Maps image IDs to processing status
 const detectionResults = new Map();
 let observer = null;
 
@@ -132,14 +133,26 @@ function addDetectionButton(img) {
       // Add click handler
       button.addEventListener('click', (event) => {
         event.stopPropagation(); // Prevent click from affecting underlying elements
-        if (resultsContainer.childNodes.length > 0) {
-          // Toggle visibility if results already exist
-          resultsContainer.style.display =
-            resultsContainer.style.display === 'none' ? 'block' : 'none';
-        } else {
-          // Process image if no results yet
-          handleDetectionRequest(img);
+
+        // If currently processing, do nothing
+        if (button.dataset.processing === 'true') {
+          return;
         }
+
+        // If results exist and are hidden, show them
+        if (resultsContainer.childNodes.length > 0 && resultsContainer.style.display === 'none') {
+          resultsContainer.style.display = 'block';
+          return;
+        }
+
+        // If results exist and are shown, hide them
+        if (resultsContainer.childNodes.length > 0 && resultsContainer.style.display === 'block') {
+          resultsContainer.style.display = 'none';
+          return;
+        }
+
+        // If no results yet, process the image
+        handleDetectionRequest(img);
       });
     }
   } catch (error) {
@@ -152,13 +165,20 @@ function addDetectionButton(img) {
 
 // Handle click on detection button
 function handleDetectionRequest(img) {
-  const { button, resultsContainer } = img.detectorElements;
+  // Generate a unique ID for this image if not already assigned
+  const imageId = img.dataset.detectorId || `img_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  img.dataset.detectorId = imageId;
 
-  // Skip if already processing
-  if (button.dataset.processing === 'true') {
-    console.log("Already processing this image, ignoring request");
+  // Check if already processing
+  if (processingImages.has(imageId) || img.detectorElements.button.dataset.processing === 'true') {
+    console.log(`Image ${imageId} is already being processed, ignoring request`);
     return;
   }
+
+  // Mark as processing
+  processingImages.set(imageId, true);
+
+  const { button, resultsContainer } = img.detectorElements;
 
   // Show loading state
   button.dataset.processing = 'true';
@@ -181,10 +201,6 @@ function handleDetectionRequest(img) {
   processingDiv.style.fontSize = '14px';
   resultsContainer.style.display = 'block';
   resultsContainer.appendChild(processingDiv);
-
-  // Generate a unique ID for this image
-  const imageId = `img_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  img.dataset.detectorId = imageId;
 
   console.log(`Starting detection for image ${imageId}`);
 
@@ -260,6 +276,7 @@ function handleDetectionError(img, errorMessage) {
   if (!img.detectorElements) return;
 
   const { button, resultsContainer } = img.detectorElements;
+  const imageId = img.dataset.detectorId;
 
   // Update button state
   button.dataset.processing = 'false';
@@ -286,13 +303,17 @@ function handleDetectionError(img, errorMessage) {
   resultsContainer.style.display = 'block';
   resultsContainer.appendChild(errorDiv);
 
-  // Revert button state after delay
+  // Clear processing status
+  if (imageId) {
+    processingImages.delete(imageId);
+  }
+
+  // Add retry capability
   setTimeout(() => {
-    button.textContent = '🔍';
-    button.title = 'Detect comic bubbles';
-    button.style.backgroundColor = 'rgba(0, 120, 255, 0.8)';
-    resultsContainer.style.display = 'none';
-  }, 5000);
+    button.textContent = '🔄'; // Change to retry icon
+    button.title = 'Error occurred. Click to retry.';
+    button.style.backgroundColor = 'rgba(255, 165, 0, 0.8)'; // Orange for retry
+  }, 3000);
 }
 
 // Handle detection results - with improved error handling
@@ -315,64 +336,41 @@ function handleDetectionResults(imageId, results, error) {
   // Clear previous results
   resultsContainer.innerHTML = '';
 
+  // Clear processing status
+  processingImages.delete(imageId);
+
   // Handle errors
   if (error) {
     console.error(`Detection error for image ${imageId}: ${error}`);
-    button.textContent = '❌';
-    button.title = `Error: ${error}`;
-    button.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
-
-    // Add error message
-    const errorDiv = document.createElement('div');
-    errorDiv.textContent = `Detection failed: ${error}`;
-    errorDiv.style.position = 'absolute';
-    errorDiv.style.top = '50%';
-    errorDiv.style.left = '50%';
-    errorDiv.style.transform = 'translate(-50%, -50%)';
-    errorDiv.style.background = 'rgba(255, 0, 0, 0.7)';
-    errorDiv.style.color = 'white';
-    errorDiv.style.padding = '10px';
-    errorDiv.style.borderRadius = '5px';
-    errorDiv.style.fontSize = '14px';
-    errorDiv.style.maxWidth = '80%';
-    errorDiv.style.textAlign = 'center';
-
-    resultsContainer.style.display = 'block';
-    resultsContainer.appendChild(errorDiv);
-
-    // Revert button state after delay
-    setTimeout(() => {
-      button.textContent = '🔍';
-      button.title = 'Detect comic bubbles';
-      button.style.backgroundColor = 'rgba(0, 120, 255, 0.8)';
-      resultsContainer.style.display = 'none';
-    }, 5000);
-
+    handleDetectionError(img, error);
     return;
   }
 
   // If no results or empty results
-  if (!results || results.length === 0) {
-    button.textContent = '👁️';
-    button.title = 'No bubbles found (click to retry)';
-    button.style.backgroundColor = 'rgba(150, 150, 0, 0.8)';
+  // if (!results || results.length === 0) {
+  //   button.textContent = '👁️';
+  //   button.title = 'No bubbles found (click to retry)';
+  //   button.style.backgroundColor = 'rgba(150, 150, 0, 0.8)';
 
-    const noResults = document.createElement('div');
-    noResults.textContent = 'No text bubbles detected';
-    noResults.style.position = 'absolute';
-    noResults.style.top = '50%';
-    noResults.style.left = '50%';
-    noResults.style.transform = 'translate(-50%, -50%)';
-    noResults.style.background = 'rgba(0, 0, 0, 0.7)';
-    noResults.style.color = 'white';
-    noResults.style.padding = '10px';
-    noResults.style.borderRadius = '5px';
-    noResults.style.fontSize = '14px';
+  //   const noResults = document.createElement('div');
+  //   noResults.textContent = 'No text bubbles detected';
+  //   noResults.style.position = 'absolute';
+  //   noResults.style.top = '50%';
+  //   noResults.style.left = '50%';
+  //   noResults.style.transform = 'translate(-50%, -50%)';
+  //   noResults.style.background = 'rgba(0, 0, 0, 0.7)';
+  //   noResults.style.color = 'white';
+  //   noResults.style.padding = '10px';
+  //   noResults.style.borderRadius = '5px';
+  //   noResults.style.fontSize = '14px';
 
-    resultsContainer.style.display = 'block';
-    resultsContainer.appendChild(noResults);
-    return;
-  }
+  //   resultsContainer.style.display = 'block';
+  //   resultsContainer.appendChild(noResults);
+  //   return;
+  // }
+
+  // Store results for future reference
+  detectionResults.set(imageId, results);
 
   // Success - show results
   button.textContent = '👁️';
@@ -450,6 +448,11 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   lineBoxes.forEach((lineBox) => {
     const { lx1, ly1, lx2, ly2 } = lineBox;
 
+    // Skip invalid line boxes
+    if (lx1 === undefined || ly1 === undefined || lx2 === undefined || ly2 === undefined) {
+      return;
+    }
+
     // Calculate scaled coordinates
     const lscaledX1 = lx1 * scaleX * 0.95;
     const lscaledY1 = ly1 * scaleY * 0.95;
@@ -498,6 +501,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   // Append the detection container to the main container
   container.appendChild(detectionContainer);
 }
+
 // Set up mutation observer to handle dynamically added images
 function setupMutationObserver() {
   // Clean up existing observer
@@ -559,4 +563,3 @@ function setupMutationObserver() {
     subtree: true
   });
 }
-

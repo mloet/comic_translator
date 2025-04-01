@@ -28,7 +28,7 @@ const id2label = {
 };
 
 // Tesseract worker
-let tesseract_worker = null;
+// let tesseract_worker = null;
 
 // DeepL language code -> Tesseract language code
 const languageMapping = {
@@ -65,7 +65,6 @@ const languageMapping = {
   'ZH': 'chi_sim'
 };
 
-
 // Register listeners
 if (!window.listenersRegistered) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -101,35 +100,68 @@ async function loadModel() {
   }
 }
 
-// Initialize Tesseract worker
-async function initializeWorker(lang = 'eng') {
-  if (tesseract_worker) {
-    // If worker exists with a different language, terminate it
-    const currentLanguage = tesseract_worker.lang;
-    if (currentLanguage !== lang) {
-      console.log(`Switching Tesseract language from ${currentLanguage} to ${lang}`);
-      await tesseract_worker.terminate();
-      tesseract_worker = null;
-    } else {
-      return tesseract_worker; // Return existing worker if language is the same
+// Simple concurrency limiter
+class ConcurrencyLimiter {
+  constructor(maxConcurrent = 3) {
+    this.maxConcurrent = maxConcurrent;
+    this.running = 0;
+    this.queue = [];
+  }
+
+  async run(fn) {
+    if (this.running >= this.maxConcurrent) {
+      // Queue the request
+      return new Promise((resolve, reject) => {
+        this.queue.push({ fn, resolve, reject });
+      });
     }
+
+    this.running++;
+    try {
+      return await fn();
+    } finally {
+      this.running--;
+      this.processQueue();
+    }
+  }
+
+  processQueue() {
+    if (this.queue.length > 0 && this.running < this.maxConcurrent) {
+      const { fn, resolve, reject } = this.queue.shift();
+      this.run(fn).then(resolve, reject);
+    }
+  }
+}
+
+// Create a limiter instance
+const ocrLimiter = new ConcurrencyLimiter(3);
+const translationLimiter = new ConcurrencyLimiter(5);
+
+// Initialize Tesseract worker
+let workerPool = {}; // Language -> worker mapping
+
+// Update initializeWorker to better handle concurrent requests
+async function initializeWorker(lang = 'eng') {
+  if (workerPool[lang]) {
+    return workerPool[lang]; // Return existing worker for this language
   }
 
   console.log('Creating Tesseract worker with language:', lang);
 
-  tesseract_worker = await Tesseract.createWorker(lang, 1, {
+  const worker = await Tesseract.createWorker(lang, 1, {
     corePath: 'local_tesseract/tesseract.js-core',
     workerPath: 'local_tesseract/worker.min.js',
     workerBlobURL: false
   });
 
-  await tesseract_worker.setParameters({
+  await worker.setParameters({
     preserve_interword_spaces: '1',
-    tessedit_char_blacklist: '#$¥%£&©®<=>@[\\]^_`{|}~0123456789¢€₹₩₽₺±×÷∞≈≠…•§¶°†‡‘’“”‹›«»–—‒™℠µ←→↑↓↔↕☑☐☒★☆',
+    tessedit_char_blacklist: '*#$¥%£&©®<=>@[\\]^_`{|}~0123456789¢€₹₩₽₺±×÷∞≈≠…•§¶°†‡"‹›«»–—‒™℠µ←→↑↓↔↕☑☐☒★☆',
   });
 
+  workerPool[lang] = worker;
   console.log('Tesseract worker created with language:', lang);
-  return tesseract_worker;
+  return worker;
 }
 
 // Perform radial blur on edges using elliptical gradient
@@ -144,8 +176,8 @@ function blurEdgesWithGradient(image, blurRadius = 10) {
   const centerX = Math.floor(processedSubsection.width / 2);
   const centerY = Math.floor(processedSubsection.height / 2);
   // Increase these values to push the blur closer to the edges (max value around 0.9)
-  const radiusX = Math.floor(processedSubsection.width * 0.9);  // Changed from 0.45 to 0.8
-  const radiusY = Math.floor(processedSubsection.height * 0.9); // Changed from 0.45 to 0.8
+  const radiusX = Math.floor(processedSubsection.width * 1);  // Changed from 0.45 to 0.8
+  const radiusY = Math.floor(processedSubsection.height * 1); // Changed from 0.45 to 0.8
 
   // Create a gradient mask with the same dimensions as our image
   const gradientMask = new ImageJS(processedSubsection.width, processedSubsection.height, {
@@ -201,15 +233,13 @@ function blurEdgesWithGradient(image, blurRadius = 10) {
 
 // Perform OCR using Tesseract.js
 async function performTesseractOCR(image, classIndex, scaleFactor, lang = 'eng') {
-  if (!tesseract_worker) {
-    tesseract_worker = await initializeWorker(lang);
-  }
+  let tesseract_worker = await initializeWorker(lang);
 
   let processedSubsection = image.grey();
 
   processedSubsection = blurEdgesWithGradient(processedSubsection, 10);
 
-  processedSubsection = processedSubsection.mask({ algorithm: 'otsu', threshold: 0.5 });
+  // processedSubsection = processedSubsection.mask({ algorithm: 'otsu', threshold: 0.5 });
 
 
   const { data: { text, blocks } } = await tesseract_worker.recognize(
@@ -324,23 +354,25 @@ async function performGoogleOCR(imageSrc) {
 }
 
 async function performOCR(image, classIndex) {
-  const scaleFactor = 3; // Scale factor for resizing
-  const resizedImage = image.resize({
-    factor: scaleFactor,
+  return ocrLimiter.run(async () => {
+    const scaleFactor = 3; // Scale factor for resizing
+    const resizedImage = image.resize({
+      factor: scaleFactor,
+    });
+
+    let ocrResults = { text: '', blocks: [] };
+
+    if (serviceSettings.ocrService === 'google') {
+      ocrResults = await performGoogleOCR(resizedImage.toDataURL());
+    } else {
+      ocrResults = await performTesseractOCR(resizedImage, classIndex, scaleFactor, languageMapping[serviceSettings.sourceLanguage] || 'eng');
+    }
+
+    // Process OCR results
+    const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
+
+    return { text: processedText, boxes: ocrResults.boxes, fontSize: Math.min(ocrResults.fontSize, 40) / scaleFactor };
   });
-
-  let ocrResults = { text: '', blocks: [] };
-
-  if (serviceSettings.ocrService === 'google') {
-    ocrResults = await performGoogleOCR(resizedImage.toDataURL());
-  } else {
-    ocrResults = await performTesseractOCR(resizedImage, classIndex, scaleFactor, languageMapping[serviceSettings.sourceLanguage] || 'eng');
-  }
-
-  // Process OCR results
-  const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-
-  return { text: processedText, boxes: ocrResults.boxes, fontSize: Math.min(ocrResults.fontSize, 40) / scaleFactor };
 }
 
 // Translate text using Google Translate API
@@ -437,16 +469,18 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
 
 // Translate text using the selected translation service
 async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
-  const translationService = serviceSettings.translationService || 'deepl';
+  return translationLimiter.run(async () => {
+    const translationService = serviceSettings.translationService || 'deepl';
 
-  if (translationService === 'deepl') {
-    return translateWithDeepL(text, forcedSourceLang, forcedTargetLang);
-  } else if (translationService === 'googleTranslate') {
-    return translateWithGoogle(text, forcedSourceLang, forcedTargetLang);
-  } else {
-    console.error('Unknown translation service:', translationService);
-    return text; // Return original text if service is somehow unknown
-  }
+    if (translationService === 'deepl') {
+      return translateWithDeepL(text, forcedSourceLang, forcedTargetLang);
+    } else if (translationService === 'googleTranslate') {
+      return translateWithGoogle(text, forcedSourceLang, forcedTargetLang);
+    } else {
+      console.error('Unknown translation service:', translationService);
+      return text; // Return original text if service is somehow unknown
+    }
+  });
 }
 
 // Main object detection function
@@ -456,9 +490,7 @@ async function detectObjects(base64Image, requestId) {
 
     await loadModel();
 
-    if (serviceSettings.ocrService === 'tesseract') {
-      tesseract_worker = await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
-    }
+    if (serviceSettings.ocrService === 'tesseract') await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
 
     // Convert base64 to image data
     const { imageData, width, height, img } = await base64ToImageData(base64Image);
