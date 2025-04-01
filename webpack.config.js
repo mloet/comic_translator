@@ -51,16 +51,16 @@ const config = {
                     }
                 },
                 {
-                    from: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
-                    to: "local_tesseract/tesseract.js-core/tesseract-core-simd-lstm.wasm.js"
+                    from: "local_libraries/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
+                    to: "local_libraries/tesseract.js-core/tesseract-core-simd-lstm.wasm.js"
                 },
                 {
-                    from: "local_tesseract/dist/worker.min.js",
-                    to: "local_tesseract/worker.min.js"
+                    from: "local_libraries/dist/worker.min.js",
+                    to: "local_libraries/worker.min.js"
                 },
                 {
-                    from: "local_tesseract/test2.png",
-                    to: "local_tesseract/test2.png"
+                    from: "local_libraries/test2.png",
+                    to: "local_libraries/test2.png"
                 }
             ],
         })

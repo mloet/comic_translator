@@ -3,5 +3,5 @@ build/
 test/
 models/
 package-lock.json
-local_tesseract/
+local_libraries/
 temp/

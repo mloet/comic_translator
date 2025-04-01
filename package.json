@@ -18,13 +18,17 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "@techstark/opencv-js": "^4.10.0-release.1",
     "@xenova/transformers": "^2.0.0",
     "axios": "^1.8.3",
+    "compromise": "^14.14.4",
     "deepl-node": "^1.17.3",
+    "dictionary-en": "^4.0.0",
+    "dictionary-es": "^4.0.0",
+    "dictionary-fr": "^3.0.0",
     "i18next": "^24.2.3",
     "image-js": "^0.36.0",
     "node-polyfill-webpack-plugin": "^4.1.0",
+    "nspell": "^2.1.5",
     "onnxruntime-web": "^1.21.0",
     "tesseract.js": "^6.0.0",
     "tesseract.js-core": "^6.0.0"

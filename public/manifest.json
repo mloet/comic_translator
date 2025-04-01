@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Comic Bubble Detection Extension",
-  "description": "YOLOv8 Comic Bubble Detection using Offscreen API",
+  "name": "Comic Translator",
+  "description": "Translate Comics in Browser Automatically",
   "version": "0.0.1",
   "permissions": [
     "activeTab",
