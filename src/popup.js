@@ -15,6 +15,7 @@ function initializePopup() {
   const translationServiceSelect = document.getElementById('translationService');
   const sourceLanguageSelect = document.getElementById('sourceLanguage');
   const targetLanguageSelect = document.getElementById('targetLanguage');
+  const detectAllImagesButton = document.getElementById('detectAllImages');
 
   // Load saved settings
   loadSavedSettings();
@@ -32,6 +33,15 @@ function initializePopup() {
   // Save language settings
   sourceLanguageSelect.addEventListener('change', saveLanguageSettings);
   targetLanguageSelect.addEventListener('change', saveLanguageSettings);
+
+  detectAllImagesButton.addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'detectAllImages' });
+        showStatus('Detection started for all images!', 'blue');
+      }
+    });
+  });
 }
 
 function saveApiKey(keyName, apiKeyValue) {

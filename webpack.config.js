@@ -51,17 +51,9 @@ const config = {
                     }
                 },
                 {
-                    from: "local_libraries/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
-                    to: "local_libraries/tesseract.js-core/tesseract-core-simd-lstm.wasm.js"
+                    from: "local_libraries",
+                    to: "local_libraries"
                 },
-                {
-                    from: "local_libraries/dist/worker.min.js",
-                    to: "local_libraries/worker.min.js"
-                },
-                {
-                    from: "local_libraries/test2.png",
-                    to: "local_libraries/test2.png"
-                }
             ],
         })
     ],

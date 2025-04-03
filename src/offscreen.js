@@ -1,11 +1,6 @@
 import * as ort from "onnxruntime-web";
 import Tesseract, { PSM } from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
-// import nspell from 'nspell';
-// import dictionaryEn from 'dictionary-en';
-// import dictionaryFr from 'dictionary-fr';
-// import dictionaryEs from 'dictionary-es';
-
 
 // Global service settings
 let serviceSettings = {
@@ -26,9 +21,6 @@ const id2label = {
   1: "text_bubble",
   2: "text_free",
 };
-
-// Tesseract worker
-// let tesseract_worker = null;
 
 // DeepL language code -> Tesseract language code
 const languageMapping = {
@@ -75,6 +67,11 @@ if (!window.listenersRegistered) {
       if (message.serviceSettings) {
         serviceSettings = message.serviceSettings;
         console.log("Using service settings:", serviceSettings);
+      }
+      if (typeof cv === 'undefined') {
+        console.error('OpenCV.js is not loaded or cv is undefined');
+      } else {
+        console.log('cv object is available');
       }
       detectObjects(message.imageData, message.requestId);
     }
@@ -149,8 +146,8 @@ async function initializeWorker(lang = 'eng') {
   console.log('Creating Tesseract worker with language:', lang);
 
   const worker = await Tesseract.createWorker(lang, 1, {
-    corePath: 'local_tesseract/tesseract.js-core',
-    workerPath: 'local_tesseract/worker.min.js',
+    corePath: 'local_libraries/tesseract/tesseract.js-core',
+    workerPath: 'local_libraries/tesseract/dist/worker.min.js',
     workerBlobURL: false
   });
 

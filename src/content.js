@@ -30,6 +30,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleDetectionResults(message.imageId, message.results, message.error);
     return false;
   }
+
+  if (message.action === 'detectAllImages') {
+    const images = document.querySelectorAll('img');
+    images.forEach((img) => {
+      if (img.naturalWidth >= 400 && img.naturalHeight >= 400) {
+        handleDetectionRequest(img);
+      }
+    });
+  }
 });
 
 // Main initialization function
@@ -404,7 +413,7 @@ function handleDetectionResults(imageId, results, error) {
 
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-  const { x1, y1, x2, y2, translatedText, boxes: lineBoxes } = detection; // Access lineBoxes from detection
+  const { x1, y1, x2, y2, translatedText } = detection;
 
   // Skip invalid detections
   if (
@@ -412,9 +421,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
     y1 === undefined ||
     x2 === undefined ||
     y2 === undefined ||
-    translatedText === '' ||
-    !lineBoxes ||
-    lineBoxes.length === 0
+    translatedText === ''
   ) {
     return;
   }
@@ -432,7 +439,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
 
   // Estimate font size and scale it
   const estimatedFontSize = detection.fontSize; // Use detection's font size or fallback to box height
-  const scaledFontSize = estimatedFontSize;
+  const scaledFontSize = estimatedFontSize * scaleY;
 
   // Create a container for the detection
   const detectionContainer = document.createElement('div');
@@ -443,39 +450,6 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   detectionContainer.style.height = `${boxHeight}px`;
   detectionContainer.style.zIndex = '3';
   detectionContainer.style.pointerEvents = 'none'; // Prevent clicks on the container
-
-  // Iterate over lineBoxes and render each line box
-  lineBoxes.forEach((lineBox) => {
-    const { lx1, ly1, lx2, ly2 } = lineBox;
-
-    // Skip invalid line boxes
-    if (lx1 === undefined || ly1 === undefined || lx2 === undefined || ly2 === undefined) {
-      return;
-    }
-
-    // Calculate scaled coordinates
-    const lscaledX1 = lx1 * scaleX * 0.95;
-    const lscaledY1 = ly1 * scaleY * 0.95;
-    const lscaledX2 = lx2 * scaleX * 1.05;
-    const lscaledY2 = ly2 * scaleY * 1.05;
-    const lboxWidth = lscaledX2 - lscaledX1;
-    const lboxHeight = lscaledY2 - lscaledY1;
-
-    // Create a container for the line box
-    const lineContainer = document.createElement('div');
-    lineContainer.style.position = 'absolute';
-    lineContainer.style.left = `${lscaledX1}px`;
-    lineContainer.style.top = `${lscaledY1}px`;
-    lineContainer.style.width = `${lboxWidth}px`;
-    lineContainer.style.height = `${lboxHeight}px`;
-    lineContainer.style.backgroundColor = 'rgb(255, 255, 255)';
-    lineContainer.style.zIndex = '3';
-    // lineContainer.style.border = '2px solid red'; // Optional: Add a border for visualization
-    lineContainer.style.pointerEvents = 'none'; // Prevent clicks on the container
-
-    // Append the line container to the main container
-    detectionContainer.appendChild(lineContainer);
-  });
 
   // Create text overlay
   const textDiv = document.createElement('div');
@@ -490,7 +464,7 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   textDiv.style.fontWeight = 'bold';
   textDiv.style.fontStyle = 'italic';
   textDiv.style.zIndex = '4';
-  textDiv.style.backgroundColor = 'rgba(255, 255, 255, 0)';
+  textDiv.style.backgroundColor = 'rgb(255, 255, 255)';
   textDiv.style.color = 'black';
   textDiv.style.fontSize = `${scaledFontSize}px`;
   textDiv.style.textAlign = 'center';
