@@ -27,6 +27,7 @@
     "dictionary-fr": "^3.0.0",
     "i18next": "^24.2.3",
     "image-js": "^0.36.0",
+    "node-easyocr": "^1.0.9",
     "node-polyfill-webpack-plugin": "^4.1.0",
     "nspell": "^2.1.5",
     "onnxruntime-web": "^1.21.0",

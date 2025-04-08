@@ -133,6 +133,30 @@ if (!globalThis.listenersRegistered) {
     }
   });
 
+  // Handle translation requests from offscreen.js
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === "translateText") {
+      const { text, sourceLang, targetLang } = message;
+      const translationService = serviceSettings.translationService || 'deepl';
+
+      if (translationService === 'deepl') {
+        translateWithDeepL(text, sourceLang, targetLang)
+          .then(translatedText => sendResponse({ translatedText }))
+          .catch(error => sendResponse({ error: error.message }));
+      } else if (translationService === 'googleTranslate') {
+        translateWithGoogle(text, sourceLang, targetLang)
+          .then(translatedText => sendResponse({ translatedText }))
+          .catch(error => sendResponse({ error: error.message }));
+      } else {
+        sendResponse({ error: "Unknown translation service" });
+      }
+
+      // Return true to indicate asynchronous response
+      return true;
+    }
+  });
+
+
   // Listen for keyboard shortcuts
   chrome.commands.onCommand.addListener((command) => {
     if (command === "open-popup") {
@@ -207,7 +231,7 @@ async function processDetectionRequest(imageData, requestId, settings) {
       const timeout = setTimeout(() => {
         handleDetectionError(requestId, "Request timed out after 30 seconds");
         reject(new Error("Request timed out"));
-      }, 30000); // 30 second timeout
+      }, 60000); // 30 second timeout
 
       // Store timeout reference
       const existingData = pendingRequests.get(requestId) || {};
@@ -274,3 +298,117 @@ function handleDetectionError(requestId, errorMessage) {
   isProcessing = false;
   processNextInQueue();
 }
+
+// Translate text using Google Translate API
+async function translateWithGoogle(text, forcedSourceLang = null, forcedTargetLang = null) {
+  if (!text || text.trim() === '') {
+    console.error('Translation error: Text is empty');
+    return text;
+  }
+
+  const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
+  const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
+  const apiKey = serviceSettings.googleApiKey; // Use googleApiKey instead of apiKey
+
+  if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
+    console.log('Translation skipped: missing API key or same language');
+    return text;
+  }
+
+  const googleSourceLang = sourceLang === 'AUTO' ? '' : sourceLang.toLowerCase();
+  const googleTargetLang = targetLang.toLowerCase();
+
+  try {
+    const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        q: text,
+        source: googleSourceLang || null,
+        target: googleTargetLang,
+        format: "text"
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.data && data.data.translations && data.data.translations.length > 0) {
+      return data.data.translations[0].translatedText;
+    } else {
+      throw new Error('Invalid response structure from Google Translate API');
+    }
+  } catch (error) {
+    console.error('Google Translation error:', error);
+    return text;
+  }
+}
+
+// Translate text using DeepL API
+async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLang = null) {
+  if (!text || text.trim() === '') {
+    console.error('Translation error: Text is empty');
+    return text;
+  }
+
+  const sourceLang = forcedSourceLang || serviceSettings.sourceLanguage;
+  const targetLang = forcedTargetLang || serviceSettings.targetLanguage;
+  const apiKey = serviceSettings.deeplApiKey;
+
+  if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
+    console.log('Translation skipped: missing API key or same language');
+    return text;
+  }
+
+  console.log('Translation request payload:', {
+    text,
+    sourceLang,
+    targetLang,
+  });
+
+  console.log(apiKey, sourceLang, targetLang, text);
+  try {
+    const response = await fetch("https://api-free.deepl.com/v2/translate", {
+      method: "POST",
+      headers: {
+        "Access-Control-Allow-Origin": "https://api-free.deepl.com",
+        "Authorization": `DeepL-Auth-Key ${apiKey}`, // Use the Authorization header
+        "Content-Type": "application/json", // Send JSON data
+      },
+      body: JSON.stringify({
+        text: [text], // Wrap the text in an array
+        source_lang: sourceLang.toUpperCase(),
+        target_lang: targetLang.toUpperCase(),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.translations[0].text;
+  } catch (error) {
+    console.error('DeepL Translation error:', error);
+    return text;
+  }
+}
+// Translate text using the selected translation service
+// async function translateText(text, forcedSourceLang = null, forcedTargetLang = null) {
+//   return translationLimiter.run(async () => {
+//     const translationService = serviceSettings.translationService || 'deepl';
+
+//     if (translationService === 'deepl') {
+//       return translateWithDeepL(text, forcedSourceLang, forcedTargetLang);
+//     } else if (translationService === 'googleTranslate') {
+//       return translateWithGoogle(text, forcedSourceLang, forcedTargetLang);
+//     } else {
+//       console.error('Unknown translation service:', translationService);
+//       return text; // Return original text if service is somehow unknown
+//     }
+//   });
+// }

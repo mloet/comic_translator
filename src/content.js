@@ -413,7 +413,7 @@ function handleDetectionResults(imageId, results, error) {
 
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-  const { x1, y1, x2, y2, translatedText } = detection;
+  const { x1, y1, x2, y2, translatedText, words } = detection;
 
   // Skip invalid detections
   if (
@@ -429,6 +429,39 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   // Calculate scaling factors
   const scaleX = imgWidth / actualWidth;
   const scaleY = imgHeight / actualHeight;
+
+  // Draw word bounding boxes as filled rectangles
+  if (words && words.length > 0) {
+    const paddingFactor = 0.1; // 10% padding
+
+    words.forEach(word => {
+      const wordX1 = word.boundingBox[0].x * scaleX / 3;
+      const wordY1 = word.boundingBox[0].y * scaleY / 3;
+      const wordX2 = word.boundingBox[2].x * scaleX / 3;
+      const wordY2 = word.boundingBox[2].y * scaleY / 3;
+
+      // Calculate width and height of the box
+      const boxWidth = wordX2 - wordX1;
+      const boxHeight = wordY2 - wordY1;
+
+      // Apply padding
+      const paddedX1 = wordX1 - boxWidth * paddingFactor;
+      const paddedY1 = wordY1 - boxHeight * paddingFactor;
+      const paddedX2 = wordX2 + boxWidth * paddingFactor;
+      const paddedY2 = wordY2 + boxHeight * paddingFactor;
+
+      const wordBox = document.createElement('div');
+      wordBox.style.position = 'absolute';
+      wordBox.style.left = `${paddedX1}px`;
+      wordBox.style.top = `${paddedY1}px`;
+      wordBox.style.width = `${paddedX2 - paddedX1}px`;
+      wordBox.style.height = `${paddedY2 - paddedY1}px`;
+      wordBox.style.backgroundColor = 'rgba(255, 255, 255, 1)'; // Semi-transparent white background
+      wordBox.style.zIndex = '2'; // Ensure it appears below the text
+
+      container.appendChild(wordBox);
+    });
+  }
 
   const scaledX1 = x1 * scaleX;
   const scaledY1 = y1 * scaleY;
@@ -464,10 +497,11 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   textDiv.style.fontWeight = 'bold';
   textDiv.style.fontStyle = 'italic';
   textDiv.style.zIndex = '4';
-  textDiv.style.backgroundColor = 'rgb(255, 255, 255)';
+  textDiv.style.backgroundColor = 'rgba(255, 255, 255, 0)';
   textDiv.style.color = 'black';
   textDiv.style.fontSize = `${scaledFontSize}px`;
   textDiv.style.textAlign = 'center';
+  textDiv.style.textShadow = `-1px -1px 0 white, 1px -1px 0 white, -1px  1px 0 white, 1px  1px 0 white`;
 
   // Append elements to the detection container
   detectionContainer.appendChild(textDiv);

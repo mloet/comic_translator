@@ -51,8 +51,8 @@ const config = {
                     }
                 },
                 {
-                    from: "local_libraries",
-                    to: "local_libraries"
+                    from: "local_libraries/tesseract",
+                    to: "local_libraries/tesseract"
                 },
             ],
         })

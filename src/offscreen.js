@@ -1,6 +1,7 @@
 import * as ort from "onnxruntime-web";
 import Tesseract, { PSM } from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
+import { resizeImage, nonMaxSuppression, createTextRegionMask, imageDataToDataURL } from './utils.js';
 
 // Global service settings
 let serviceSettings = {
@@ -67,11 +68,6 @@ if (!window.listenersRegistered) {
       if (message.serviceSettings) {
         serviceSettings = message.serviceSettings;
         console.log("Using service settings:", serviceSettings);
-      }
-      if (typeof cv === 'undefined') {
-        console.error('OpenCV.js is not loaded or cv is undefined');
-      } else {
-        console.log('cv object is available');
       }
       detectObjects(message.imageData, message.requestId);
     }
@@ -161,83 +157,13 @@ async function initializeWorker(lang = 'eng') {
   return worker;
 }
 
-// Perform radial blur on edges using elliptical gradient
-function blurEdgesWithGradient(image, blurRadius = 10) {
-  // Convert to greyscale if needed
-  let processedSubsection = image.colorModel === 'GREY' ? image.clone() : image.grey();
-
-  // Create a blurred version of the entire image
-  const blurredImage = processedSubsection.blurFilter({ radius: blurRadius });
-
-  // Calculate the dimensions for the elliptical gradient
-  const centerX = Math.floor(processedSubsection.width / 2);
-  const centerY = Math.floor(processedSubsection.height / 2);
-  // Increase these values to push the blur closer to the edges (max value around 0.9)
-  const radiusX = Math.floor(processedSubsection.width * 1);  // Changed from 0.45 to 0.8
-  const radiusY = Math.floor(processedSubsection.height * 1); // Changed from 0.45 to 0.8
-
-  // Create a gradient mask with the same dimensions as our image
-  const gradientMask = new ImageJS(processedSubsection.width, processedSubsection.height, {
-    kind: 'GREY'
-  });
-
-  // Fill the gradient mask with values based on distance from center
-  for (let y = 0; y < gradientMask.height; y++) {
-    for (let x = 0; x < gradientMask.width; x++) {
-      // Calculate normalized distance from center (0 to 1+)
-      const normalizedDistance =
-        Math.sqrt(
-          Math.pow(x - centerX, 2) / Math.pow(radiusX, 2) +
-          Math.pow(y - centerY, 2) / Math.pow(radiusY, 2)
-        );
-
-      let maskValue = 0;
-      if (normalizedDistance <= 1) {
-        const transitionPower = 2;
-        maskValue = Math.pow(Math.cos(normalizedDistance * Math.PI / 2), transitionPower);
-      }
-
-      // Set the mask value (scaled to image bit depth)
-      const scaledValue = Math.round(maskValue * gradientMask.maxValue);
-      gradientMask.setValueXY(x, y, 0, scaledValue);
-    }
-  }
-
-  // Create a result image to hold our combined result
-  const result = processedSubsection.clone();
-
-  // Combine the original image and the blurred image based on the gradient mask
-  for (let y = 0; y < result.height; y++) {
-    for (let x = 0; x < result.width; x++) {
-      // Get the mask value (normalized to [0,1])
-      const maskValue = gradientMask.getValueXY(x, y, 0) / gradientMask.maxValue;
-
-      for (let c = 0; c < result.channels; c++) {
-        // Linear interpolation between original and blurred image
-        const originalValue = processedSubsection.getValueXY(x, y, c);
-        const blurredValue = blurredImage.getValueXY(x, y, c);
-        const blendedValue = Math.round(
-          originalValue * maskValue + blurredValue * (1 - maskValue)
-        );
-
-        result.setValueXY(x, y, c, blendedValue);
-      }
-    }
-  }
-
-  return result;
-}
-
 // Perform OCR using Tesseract.js
 async function performTesseractOCR(image, classIndex, scaleFactor, lang = 'eng') {
   let tesseract_worker = await initializeWorker(lang);
 
   let processedSubsection = image.grey();
 
-  processedSubsection = blurEdgesWithGradient(processedSubsection, 10);
-
   // processedSubsection = processedSubsection.mask({ algorithm: 'otsu', threshold: 0.5 });
-
 
   const { data: { text, blocks } } = await tesseract_worker.recognize(
     processedSubsection.toDataURL(),
@@ -304,7 +230,7 @@ async function performGoogleOCR(imageSrc) {
   const apiKey = serviceSettings.googleApiKey;
   if (!apiKey) {
     console.error('Google Cloud Vision API key is missing');
-    return { text: '', blocks: [], fontSize: null };
+    return { blocks: [] };
   }
 
   try {
@@ -314,7 +240,7 @@ async function performGoogleOCR(imageSrc) {
       body: JSON.stringify({
         requests: [{
           image: { content: imageSrc.split(',')[1] },
-          features: [{ type: 'TEXT_DETECTION' }]
+          features: [{ type: 'DOCUMENT_TEXT_DETECTION' }]
         }]
       })
     });
@@ -324,29 +250,44 @@ async function performGoogleOCR(imageSrc) {
     }
 
     const data = await response.json();
-    if (!data.responses || !data.responses[0] || !data.responses[0].textAnnotations) {
+    if (!data.responses || !data.responses[0] || !data.responses[0].fullTextAnnotation) {
       console.log('No text detected by Google Cloud Vision API');
-      return { text: '', blocks: [], fontSize: null };
+      return { blocks: [] };
     }
 
-    const textAnnotations = data.responses[0].textAnnotations;
-    const text = textAnnotations[0].description;
-    const blocks = textAnnotations.slice(1).map(annotation => ({
-      text: annotation.description,
-      boundingBox: annotation.boundingPoly.vertices
-    }));
+    const blocks = data.responses[0].fullTextAnnotation.pages[0].blocks.map(block => {
+      const blockVertices = block.boundingBox.vertices;
 
-    // Estimate font size based on bounding box heights
-    const heights = blocks.map(block => {
-      const vertices = block.boundingBox;
-      return Math.abs(vertices[3].y - vertices[0].y); // Height of the bounding box
+      // Extract words and their bounding boxes
+      const words = block.paragraphs.flatMap(paragraph =>
+        paragraph.words.map(word => ({
+          text: word.symbols.map(symbol => symbol.text).join(''),
+          boundingBox: word.boundingBox.vertices
+        }))
+      );
+
+      // Calculate font size based on the average height of word bounding boxes
+      const totalHeight = words.reduce((sum, word) => {
+        const wordHeight = Math.abs(word.boundingBox[3].y - word.boundingBox[0].y);
+        return sum + wordHeight;
+      }, 0);
+      const fontSize = words.length > 0 ? totalHeight / words.length : 0;
+      console.log('Font size:', fontSize);
+
+      console.log('words', words);
+      // Combine block-level data
+      return {
+        text: words.map(word => word.text).join(' '), // Combine all words in the block
+        boundingBox: blockVertices,
+        fontSize,
+        words
+      };
     });
-    const fontSize = heights.length > 0 ? heights.reduce((a, b) => a + b, 0) / heights.length : null;
 
-    return { text, blocks, fontSize };
+    return { blocks };
   } catch (error) {
     console.error('Error fetching Google Cloud Vision OCR results:', error);
-    return { text: '', blocks: [], fontSize: null };
+    return { blocks: [] };
   }
 }
 
@@ -435,6 +376,12 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
   if (!apiKey || (sourceLang === targetLang && sourceLang !== 'AUTO')) {
     console.log('Translation skipped: missing API key or same language');
     return text;
+  } else {
+    console.log('Translation request payload:', {
+      text,
+      sourceLang,
+      targetLang,
+    });
   }
 
   console.log(apiKey, sourceLang, targetLang, text);
@@ -445,9 +392,9 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
-        auth_key: apiKey,
+        auth_key: serviceSettings.deeplApiKey, // Replace with your DeepL API key
         text: text,
-        source_lang: sourceLang === 'AUTO' ? '' : sourceLang.toUpperCase(),
+        source_lang: sourceLang.toUpperCase(),
         target_lang: targetLang.toUpperCase(),
       }),
     });
@@ -480,17 +427,49 @@ async function translateText(text, forcedSourceLang = null, forcedTargetLang = n
   });
 }
 
-// Main object detection function
 async function detectObjects(base64Image, requestId) {
   try {
     console.log("Processing image for detection");
 
+    if (serviceSettings.ocrService === 'googleCloudVision') {
+      const scaleFactor = 3; // Scale factor for resizing
+      const img = await resizeImage(base64Image, scaleFactor);
+
+      // Perform OCR on the entire image using Google OCR
+      const ocrResults = await performGoogleOCR(img);
+
+      // Map the OCR results to the expected format
+      const results = await Promise.all(
+        ocrResults.blocks.map(async (block) => {
+          const vertices = block.boundingBox;
+          const translatedText = await translateText(block.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
+          return {
+            x1: vertices[0].x / scaleFactor,
+            y1: vertices[0].y / scaleFactor,
+            x2: vertices[2].x / scaleFactor,
+            y2: vertices[2].y / scaleFactor,
+            translatedText: translatedText.toUpperCase(), // Translated text
+            fontSize: block.fontSize / scaleFactor, // Font size for the block
+            words: block.words
+          };
+        })
+      );
+
+      console.log(`Found ${results.length} text blocks using Google OCR`);
+
+      // Send results back
+      chrome.runtime.sendMessage({
+        action: "detectionResults",
+        results: results,
+        requestId: requestId
+      });
+
+      return;
+    }
+
     await loadModel();
 
-    if (serviceSettings.ocrService === 'tesseract') await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
-
-    // Convert base64 to image data
-    const { imageData, width, height, img } = await base64ToImageData(base64Image);
+    await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
 
     // Preprocess image
     const inputTensor = preprocessImage(img);
@@ -517,26 +496,6 @@ async function detectObjects(base64Image, requestId) {
       requestId: requestId
     });
   }
-}
-
-// Helper functions
-
-// Convert base64 image to ImageData
-async function base64ToImageData(base64Image) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = function () {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, img.width, img.height);
-      resolve({ imageData, width: img.width, height: img.height, img });
-    };
-    img.onerror = reject;
-    img.src = base64Image;
-  });
 }
 
 // Preprocess the image for the model
@@ -577,6 +536,7 @@ function preprocessImage(img) {
   return new ort.Tensor('float32', inputTensor, [1, 3, targetHeight, targetWidth]);
 }
 
+// Postprocess the model output
 async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   const image = await ImageJS.load(img.src);
   const logits = outputs.logits.data; // Classification logits
@@ -647,28 +607,25 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   return filteredDetections;
 }
 
-function calculateIoU(box1, box2) {
-  const x1 = Math.max(box1.x1, box2.x1);
-  const y1 = Math.max(box1.y1, box2.y1);
-  const x2 = Math.min(box1.x2, box2.x2);
-  const y2 = Math.min(box1.y2, box2.y2);
 
-  const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const box1Area = (box1.x2 - box1.x1) * (box1.y2 - box1.y1);
-  const box2Area = (box2.x2 - box2.x1) * (box2.y2 - box2.y1);
 
-  return intersection / (box1Area + box2Area - intersection);
-}
 
-function nonMaxSuppression(detections, iouThreshold) {
-  detections.sort((a, b) => b.confidence - a.confidence);
-  const finalDetections = [];
-
-  while (detections.length > 0) {
-    const best = detections.shift();
-    finalDetections.push(best);
-    detections = detections.filter(box => calculateIoU(best, box) < iouThreshold);
-  }
-
-  return finalDetections;
-}
+// async function translateText(text, sourceLang, targetLang) {
+//   return new Promise((resolve, reject) => {
+//     chrome.runtime.sendMessage(
+//       {
+//         action: "translateText",
+//         text,
+//         sourceLang: sourceLang || serviceSettings.sourceLanguage,
+//         targetLang: targetLang || serviceSettings.targetLanguage,
+//       },
+//       (response) => {
+//         if (response.error) {
+//           reject(new Error(response.error));
+//         } else {
+//           resolve(response.translatedText);
+//         }
+//       }
+//     );
+//   });
+// }
