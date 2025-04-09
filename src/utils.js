@@ -17,6 +17,103 @@ export async function base64ToImageData(base64Image) {
   });
 }
 
+// Here's how we can modify your key image processing functions to use canvas API throughout
+
+// Helper function to create canvas from ImageData
+export function imageDataToCanvas(imageData) {
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  ctx.putImageData(imageData, 0, 0);
+  return { canvas, ctx };
+}
+
+// Helper function to get ImageData from canvas
+export function canvasToImageData(canvas) {
+  const ctx = canvas.getContext('2d');
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+// Convert to grayscale using canvas operations
+export function toGrayscale(imageData) {
+  const { canvas, ctx } = imageDataToCanvas(imageData);
+  const newImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = newImageData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    data[i] = data[i + 1] = data[i + 2] = avg;
+  }
+
+  ctx.putImageData(newImageData, 0, 0);
+  return newImageData;
+}
+
+// Resize image using canvas operations
+export function resizeImageData(imageData, newWidth, newHeight) {
+  const { canvas, ctx } = imageDataToCanvas(imageData);
+
+  // Create a new canvas with the target dimensions
+  const resizedCanvas = document.createElement('canvas');
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const resizedCtx = resizedCanvas.getContext('2d');
+
+  // Enable smooth interpolation
+  resizedCtx.imageSmoothingEnabled = true;
+  resizedCtx.imageSmoothingQuality = 'high';
+
+  // Draw the original canvas onto the resized canvas
+  resizedCtx.drawImage(canvas, 0, 0, newWidth, newHeight);
+
+  // Return the ImageData from the resized canvas
+  return resizedCtx.getImageData(0, 0, newWidth, newHeight);
+}
+
+// Crop an image using canvas operations
+export function cropImageData(imageData, x, y, width, height) {
+  const { canvas, ctx } = imageDataToCanvas(imageData);
+
+  // Ensure crop region is within bounds
+  x = Math.max(0, x);
+  y = Math.max(0, y);
+  width = Math.min(width, imageData.width - x);
+  height = Math.min(height, imageData.height - y);
+
+  // Create a new canvas for the cropped region
+  const croppedCanvas = document.createElement('canvas');
+  croppedCanvas.width = width;
+  croppedCanvas.height = height;
+  const croppedCtx = croppedCanvas.getContext('2d');
+
+  // Draw the cropped region
+  croppedCtx.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+
+  // Return the ImageData from the cropped canvas
+  return croppedCtx.getImageData(0, 0, width, height);
+}
+
+// Apply a simple blur filter using canvas operations
+export function blurImageData(imageData, radius) {
+  // For a simple implementation, we can use a CSS filter
+  const { canvas, ctx } = imageDataToCanvas(imageData);
+
+  const blurredCanvas = document.createElement('canvas');
+  blurredCanvas.width = canvas.width;
+  blurredCanvas.height = canvas.height;
+  const blurredCtx = blurredCanvas.getContext('2d');
+
+  // Apply blur filter
+  blurredCtx.filter = `blur(${radius}px)`;
+  blurredCtx.drawImage(canvas, 0, 0);
+
+  // Clear the filter
+  blurredCtx.filter = 'none';
+
+  return blurredCtx.getImageData(0, 0, blurredCanvas.width, blurredCanvas.height);
+}
+
 export async function resizeImage(imageOrBase64, scaleFactor) {
   // Convert base64 string to an HTMLImageElement if necessary
   const image = typeof imageOrBase64 === 'string'

@@ -1,7 +1,7 @@
 import * as ort from "onnxruntime-web";
 import Tesseract, { PSM } from 'tesseract.js';
 import { Image as ImageJS } from 'image-js';
-import { resizeImage, nonMaxSuppression, createTextRegionMask, imageDataToDataURL } from './utils.js';
+import { resizeImageData, nonMaxSuppression, calculateIoU, cropImageData, imageDataToDataURL, base64ToImageData, toGrayscale } from './utils.js';
 
 // Global service settings
 let serviceSettings = {
@@ -158,15 +158,20 @@ async function initializeWorker(lang = 'eng') {
 }
 
 // Perform OCR using Tesseract.js
-async function performTesseractOCR(image, classIndex, scaleFactor, lang = 'eng') {
+async function performTesseractOCR(imageData, classIndex, lang = 'eng') {
   let tesseract_worker = await initializeWorker(lang);
 
-  let processedSubsection = image.grey();
+  const scaleFactor = 3; // Scale factor for resizing
+  const resizedImage = resizeImageData(imageData,
+    imageData.width * scaleFactor,
+    imageData.height * scaleFactor);
+
+  let processedSubsection = toGrayscale(resizedImage);
 
   // processedSubsection = processedSubsection.mask({ algorithm: 'otsu', threshold: 0.5 });
 
   const { data: { text, blocks } } = await tesseract_worker.recognize(
-    processedSubsection.toDataURL(),
+    imageDataToDataURL(processedSubsection),
     { tessedit_pageseg_mode: PSM.SINGLE_BLOCK },
     { blocks: true }
   );
@@ -215,14 +220,11 @@ async function performTesseractOCR(image, classIndex, scaleFactor, lang = 'eng')
     });
   });
 
-  const correctedText = wordArray.join(' ')
-
-  console.log(text);
-  console.log(correctedText);
-
   const fontSize = lineCount > 0 ? (totalHeight / lineCount) : (image.height / lineBoxes.length);
 
-  return { text, boxes: lineBoxes, fontSize };
+  return {
+    text: text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase(), boxes: lineBoxes, fontSize: fontSize / scaleFactor
+  };
 }
 
 // Fetch OCR results from Google Cloud Vision API
@@ -289,28 +291,6 @@ async function performGoogleOCR(imageSrc) {
     console.error('Error fetching Google Cloud Vision OCR results:', error);
     return { blocks: [] };
   }
-}
-
-async function performOCR(image, classIndex) {
-  return ocrLimiter.run(async () => {
-    const scaleFactor = 3; // Scale factor for resizing
-    const resizedImage = image.resize({
-      factor: scaleFactor,
-    });
-
-    let ocrResults = { text: '', blocks: [] };
-
-    if (serviceSettings.ocrService === 'google') {
-      ocrResults = await performGoogleOCR(resizedImage.toDataURL());
-    } else {
-      ocrResults = await performTesseractOCR(resizedImage, classIndex, scaleFactor, languageMapping[serviceSettings.sourceLanguage] || 'eng');
-    }
-
-    // Process OCR results
-    const processedText = ocrResults.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase();
-
-    return { text: processedText, boxes: ocrResults.boxes, fontSize: Math.min(ocrResults.fontSize, 40) / scaleFactor };
-  });
 }
 
 // Translate text using Google Translate API
@@ -431,54 +411,21 @@ async function detectObjects(base64Image, requestId) {
   try {
     console.log("Processing image for detection");
 
-    if (serviceSettings.ocrService === 'googleCloudVision') {
-      const scaleFactor = 3; // Scale factor for resizing
-      const img = await resizeImage(base64Image, scaleFactor);
-
-      // Perform OCR on the entire image using Google OCR
-      const ocrResults = await performGoogleOCR(img);
-
-      // Map the OCR results to the expected format
-      const results = await Promise.all(
-        ocrResults.blocks.map(async (block) => {
-          const vertices = block.boundingBox;
-          const translatedText = await translateText(block.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
-          return {
-            x1: vertices[0].x / scaleFactor,
-            y1: vertices[0].y / scaleFactor,
-            x2: vertices[2].x / scaleFactor,
-            y2: vertices[2].y / scaleFactor,
-            translatedText: translatedText.toUpperCase(), // Translated text
-            fontSize: block.fontSize / scaleFactor, // Font size for the block
-            words: block.words
-          };
-        })
-      );
-
-      console.log(`Found ${results.length} text blocks using Google OCR`);
-
-      // Send results back
-      chrome.runtime.sendMessage({
-        action: "detectionResults",
-        results: results,
-        requestId: requestId
-      });
-
-      return;
-    }
-
     await loadModel();
 
     await initializeWorker(languageMapping[serviceSettings.sourceLanguage] || 'eng');
 
+    // Convert base64 to image data
+    const { imageData, width, height, img } = await base64ToImageData(base64Image);
+
     // Preprocess image
-    const inputTensor = preprocessImage(img);
+    const inputTensor = preprocessImage(imageData);
 
     // Run inference
     const outputs = await session.run({ pixel_values: inputTensor });
 
     // Process results
-    const results = await postprocessOutput(outputs, width, height, img);
+    const results = await postprocessOutput(outputs, width, height, imageData);
     console.log(`Found ${results.length} detections`);
 
     // Send results back
@@ -499,20 +446,13 @@ async function detectObjects(base64Image, requestId) {
 }
 
 // Preprocess the image for the model
-function preprocessImage(img) {
+function preprocessImage(imageData) {
   const targetWidth = 640;
   const targetHeight = 640;
 
-  // Create a canvas to resize the image
-  const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
-  // Get image data
-  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-  const data = imageData.data;
+  // Resize imageData
+  const resizedImageData = resizeImageData(imageData, targetWidth, targetHeight);
+  const data = resizedImageData.data;
 
   // Preprocessing parameters from preprocessor_config.json
   const imageMean = [0.485, 0.456, 0.406];
@@ -537,8 +477,7 @@ function preprocessImage(img) {
 }
 
 // Postprocess the model output
-async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
-  const image = await ImageJS.load(img.src);
+async function postprocessOutput(outputs, originalWidth, originalHeight, imageData) {
   const logits = outputs.logits.data; // Classification logits
   const predBoxes = outputs.pred_boxes.data; // Bounding box predictions
   const numQueries = outputs.logits.dims[1]; // Number of object queries
@@ -580,30 +519,87 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, img) {
   // Perform non-max suppression to filter overlapping boxes
   const filteredDetections = nonMaxSuppression(detections, 0.5);
 
+  // Perform OCR on the entire image using Google OCR
+  let googleResults = null;
+  if (serviceSettings.ocrService === 'googleCloudVision') {
+    const base64Image = imageDataToDataURL(imageData);
+    googleResults = await performGoogleOCR(base64Image);
+  }
+
   // Perform OCR on the detected regions
   for (const detection of filteredDetections) {
     const { x1, y1, x2, y2, classIndex } = detection;
-    const w = x2 - x1;
-    const h = y2 - y1;
-    const subsection = image.crop({
-      x: Math.max(0, x1),
-      y: Math.max(0, y1),
-      width: Math.min(w, image.width - x1),
-      height: Math.min(h, image.height - y1),
-    });
 
     try {
-      const ocrResults = await performOCR(subsection, classIndex);
-      detection.boxes = ocrResults.boxes;
-      detection.fontSize = ocrResults.fontSize;
-      detection.translatedText = await translateText(ocrResults.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
+      if (serviceSettings.ocrService === 'googleCloudVision') {
+        const wordsInDetection = googleResults.blocks.flatMap(block =>
+          block.words.filter(word => {
+            const wordBox = word.boundingBox;
+            const wordX1 = wordBox[0].x;
+            const wordY1 = wordBox[0].y;
+            const wordX2 = wordBox[2].x;
+            const wordY2 = wordBox[2].y;
+
+            // Check if the word's bounding box is within the detection's bounding box
+            return (
+              wordX1 >= x1 && wordY1 >= y1 &&
+              wordX2 <= x2 && wordY2 <= y2
+            );
+          })
+        );
+
+        console.log('wordsInDetection', wordsInDetection);
+
+        const sortedWords = wordsInDetection.sort((a, b) => {
+          const aCenterY = (a.boundingBox[0].y + a.boundingBox[2].y) / 2;
+          const bCenterY = (b.boundingBox[0].y + b.boundingBox[2].y) / 2;
+          const lineThreshold = Math.min(
+            a.boundingBox[3].y - a.boundingBox[0].y,
+            b.boundingBox[3].y - b.boundingBox[0].y
+          ) * 0.5;
+
+          if (Math.abs(aCenterY - bCenterY) < lineThreshold) {
+            const aCenterX = (a.boundingBox[0].x + a.boundingBox[2].x) / 2;
+            const bCenterX = (b.boundingBox[0].x + b.boundingBox[2].x) / 2;
+            return aCenterX - bCenterX;
+          }
+          return aCenterY - bCenterY;
+        });
+
+        // Calculate font size based on the average height of the words' bounding boxes
+        const totalHeight = sortedWords.reduce((sum, word) => {
+          const wordHeight = Math.abs(word.boundingBox[3].y - word.boundingBox[0].y);
+          return sum + wordHeight;
+        }, 0);
+
+        detection.fontSize = sortedWords.length > 0 ? totalHeight / sortedWords.length : 0;
+        detection.words = sortedWords;
+        detection.text = sortedWords.map(word => word.text).join(' ') || '';
+      } else if (serviceSettings.ocrService === 'tesseract') {
+        const w = x2 - x1;
+        const h = y2 - y1;
+        const subsection = cropImageData(imageData, Math.max(0, x1), Math.max(0, y1),
+          Math.min(w, originalWidth - x1),
+          Math.min(h, originalHeight - y1));
+
+        const ocrResults = await performTesseractOCR(subsection, classIndex);
+        detection.boxes = ocrResults.boxes;
+        detection.fontSize = ocrResults.fontSize;
+        detection.text = ocrResults.text || '';
+      }
+
+      if (detection.text) {
+        detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
+        detection.translatedText = detection.translatedText.toUpperCase(); // Convert to uppercase
+      } else {
+        detection.translatedText = '';
+      }
     } catch (error) {
-      console.error('Error processing OCR or translation:', error);
-      detection.boxes = [];
-      detection.fontSize = 0;
-      detection.translatedText = '';
+      console.error('Error processing detection:', error);
+      detection.translatedText = detection.text || '';
     }
   }
+
   return filteredDetections;
 }
 
