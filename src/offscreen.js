@@ -168,6 +168,9 @@ async function performTesseractOCR(imageData, classIndex, lang = 'eng') {
 
   let processedSubsection = toGrayscale(resizedImage);
 
+  // console.log('Processed subsection size:', processedSubsection.width, processedSubsection.height);
+  // console.log(imageDataToDataURL(processedSubsection));
+
   // processedSubsection = processedSubsection.mask({ algorithm: 'otsu', threshold: 0.5 });
 
   const { data: { text, blocks } } = await tesseract_worker.recognize(
@@ -195,35 +198,38 @@ async function performTesseractOCR(imageData, classIndex, lang = 'eng') {
   filteredBlocks.forEach(block => {
     block.paragraphs.forEach(paragraph => {
       paragraph.lines.forEach(line => {
-        line.words.forEach(word => {
-          if (word.confidence > 20) {
-            let correctedWord = word.text;
-            // if (word.confidence < 80) {
-            //   correctedWord = spellChecker.correct(word.text)
-            //     ? word.text
-            //     : (spellChecker.suggest(word.text)[0] || word.text);
-            // }
-            wordArray.push(correctedWord);
-          }
-        });
+        // line.words.forEach(word => {
+        //   if (word.confidence > 20) {
+        //     let correctedWord = word.text;
+        //     // if (word.confidence < 80) {
+        //     //   correctedWord = spellChecker.correct(word.text)
+        //     //     ? word.text
+        //     //     : (spellChecker.suggest(word.text)[0] || word.text);
+        //     // }
+        //     wordArray.push(correctedWord);
+        //   }
+        // });
         if (line.confidence > 60) {
           totalHeight += line.rowAttributes.rowHeight;
           lineCount++;
         }
-        lineBoxes.push({
-          lx1: line.bbox.x0 / scaleFactor,
-          ly1: line.bbox.y0 / scaleFactor,
-          lx2: line.bbox.x1 / scaleFactor,
-          ly2: line.bbox.y1 / scaleFactor
-        });
+        lineBoxes.push([
+          { x: line.bbox.x0 / scaleFactor, y: line.bbox.y0 / scaleFactor }, // Top-left
+          { x: line.bbox.x1 / scaleFactor, y: line.bbox.y0 / scaleFactor }, // Top-right
+          { x: line.bbox.x1 / scaleFactor, y: line.bbox.y1 / scaleFactor }, // Bottom-right
+          { x: line.bbox.x0 / scaleFactor, y: line.bbox.y1 / scaleFactor }  // Bottom-left
+        ]);
       });
     });
   });
 
-  const fontSize = lineCount > 0 ? (totalHeight / lineCount) : (image.height / lineBoxes.length);
+  const fontSize = (totalHeight / lineCount);
+  // console.log('Font size:', fontSize, 'Line count:', lineCount, 'Total height:', totalHeight);
+  // console.log(text);
+  console.log(lineBoxes)
 
   return {
-    text: text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase(), boxes: lineBoxes, fontSize: fontSize / scaleFactor
+    text, boxes: lineBoxes, fontSize: fontSize / scaleFactor
   };
 }
 
@@ -548,7 +554,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
           })
         );
 
-        console.log('wordsInDetection', wordsInDetection);
+        // console.log('wordsInDetection', wordsInDetection);
 
         const sortedWords = wordsInDetection.sort((a, b) => {
           const aCenterY = (a.boundingBox[0].y + a.boundingBox[2].y) / 2;
@@ -574,6 +580,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
 
         detection.fontSize = sortedWords.length > 0 ? totalHeight / sortedWords.length : 0;
         detection.words = sortedWords;
+        console.log('Sorted words:', sortedWords);
         detection.text = sortedWords.map(word => word.text).join(' ') || '';
       } else if (serviceSettings.ocrService === 'tesseract') {
         const w = x2 - x1;
@@ -583,13 +590,13 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
           Math.min(h, originalHeight - y1));
 
         const ocrResults = await performTesseractOCR(subsection, classIndex);
-        detection.boxes = ocrResults.boxes;
+        // detection.words = ocrResults.boxes;
         detection.fontSize = ocrResults.fontSize;
-        detection.text = ocrResults.text || '';
+        detection.text = ocrResults.text;
       }
 
       if (detection.text) {
-        detection.translatedText = await translateText(detection.text, serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
+        detection.translatedText = await translateText(detection.text.trim().replace(/-\n+/g, '').replace(/\s+/g, ' ').toUpperCase(), serviceSettings.sourceLanguage, serviceSettings.targetLanguage);
         detection.translatedText = detection.translatedText.toUpperCase(); // Convert to uppercase
       } else {
         detection.translatedText = '';
