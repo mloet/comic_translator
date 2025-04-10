@@ -14,25 +14,32 @@
 .comic-bubble-detector-button {
   position: absolute;
   top: 5px;
-  right: 5px;
+  left: 5px;
   z-index: 9999;
-  background: rgba(0, 120, 255, 0.8);
-  color: white;
+  background: rgba(255, 255, 255, 0.8);
   border: none;
-  border-radius: 50%;
-  width: 30px;
-  height: 30px;
+  border-radius: 10px;
+  width: 50px;
+  height: 50px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.comic-bubble-detector-wrapper:hover .comic-bubble-detector-button {
+  opacity: 0.8;
+  pointer-events: auto;
 }
 
 .comic-bubble-detector-button:hover {
-  background-color: rgba(0, 100, 255, 1);
+  opacity: 1;
+  background-color: rgb(255, 255, 255);
 }
 
 .comic-bubble-detector-results {
@@ -54,7 +61,7 @@
   padding: 5px;
   box-sizing: border-box;
   color: black;
-  font-family: 'Comic Sans MS', 'Arial', sans-serif;
+  font-family: 'CC Wild Words', 'Comic Sans MS', 'Arial', sans-serif;
   font-weight: bold;
   white-space: normal;
   word-wrap: break-word;
@@ -67,22 +74,40 @@
   background-color: rgba(255, 255, 255, 0.3);
 }
 
-/* Animation for processing state */
-@keyframes pulse {
-  0% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.1);
-  }
-
-  100% {
-    transform: scale(1);
-  }
+.comic-bubble-toggle-button {
+  background: rgba(255, 255, 255, 0.8);
+  color: black;
+  border: none;
+  border-radius: 10px;
+  text-align: center;
+  width: 50px;
+  height: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Calibri', sans-serif;
+  font-size: 12px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+  opacity: 0;
+  /* Initially hidden */
+  pointer-events: none;
+  position: absolute;
+  top: 60px;
+  /* Position below the detection button */
+  left: 5px;
 }
 
-.comic-bubble-detector-button.processing {
-  animation: pulse 1.5s infinite;
-  background-color: rgba(200, 100, 0, 0.8);
+.comic-bubble-detector-wrapper:hover .comic-bubble-toggle-button {
+  opacity: 0.8;
+  /* Show button with 0.8 transparency when hovering over the image */
+  pointer-events: auto;
+  /* Enable interaction */
+}
+
+.comic-bubble-toggle-button:hover {
+  opacity: 1;
+  /* Fully opaque when hovering over the button */
+  background-color: rgb(255, 255, 255);
 }

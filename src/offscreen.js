@@ -375,6 +375,7 @@ async function translateWithDeepL(text, forcedSourceLang = null, forcedTargetLan
     const response = await fetch("https://api-free.deepl.com/v2/translate", {
       method: "POST",
       headers: {
+        "Access-Control-Allow-Origin": "https://api-free.deepl.com/v2/translate",
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
@@ -538,50 +539,35 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
 
     try {
       if (serviceSettings.ocrService === 'googleCloudVision') {
-        const wordsInDetection = googleResults.blocks.flatMap(block =>
-          block.words.filter(word => {
-            const wordBox = word.boundingBox;
-            const wordX1 = wordBox[0].x;
-            const wordY1 = wordBox[0].y;
-            const wordX2 = wordBox[2].x;
-            const wordY2 = wordBox[2].y;
+        const blocksInDetection = googleResults.blocks.filter(block => {
+          const blockBox = block.boundingBox;
+          const blockCenterX = (blockBox[0].x + blockBox[2].x) / 2;
+          const blockCenterY = (blockBox[0].y + blockBox[2].y) / 2;
 
-            // Check if the word's bounding box is within the detection's bounding box
-            return (
-              wordX1 >= x1 && wordY1 >= y1 &&
-              wordX2 <= x2 && wordY2 <= y2
-            );
-          })
-        );
+          // Check if the block's center is within the detection's bounding box
+          return (
+            blockCenterX >= x1 && blockCenterX <= x2 &&
+            blockCenterY >= y1 && blockCenterY <= y2
+          );
+        });
 
-        // console.log('wordsInDetection', wordsInDetection);
-
-        const sortedWords = wordsInDetection.sort((a, b) => {
+        // Sort blocks by their vertical position (center Y)
+        const sortedBlocks = blocksInDetection.sort((a, b) => {
           const aCenterY = (a.boundingBox[0].y + a.boundingBox[2].y) / 2;
           const bCenterY = (b.boundingBox[0].y + b.boundingBox[2].y) / 2;
-          const lineThreshold = Math.min(
-            a.boundingBox[3].y - a.boundingBox[0].y,
-            b.boundingBox[3].y - b.boundingBox[0].y
-          ) * 0.5;
-
-          if (Math.abs(aCenterY - bCenterY) < lineThreshold) {
-            const aCenterX = (a.boundingBox[0].x + a.boundingBox[2].x) / 2;
-            const bCenterX = (b.boundingBox[0].x + b.boundingBox[2].x) / 2;
-            return aCenterX - bCenterX;
-          }
           return aCenterY - bCenterY;
         });
 
-        // Calculate font size based on the average height of the words' bounding boxes
-        const totalHeight = sortedWords.reduce((sum, word) => {
-          const wordHeight = Math.abs(word.boundingBox[3].y - word.boundingBox[0].y);
-          return sum + wordHeight;
-        }, 0);
+        // Combine text from all blocks
+        detection.text = sortedBlocks.map(block => block.text).join(' ') || '';
+        // const totalHeight = sortedBlocks.reduce((sum, block) => {
+        //   const blockHeight = Math.abs(block.boundingBox[3].y - block.boundingBox[0].y);
+        //   return sum + blockHeight;
+        // }, 0);
 
-        detection.fontSize = sortedWords.length > 0 ? totalHeight / sortedWords.length : 0;
-        detection.words = sortedWords;
-        console.log('Sorted words:', sortedWords);
-        detection.text = sortedWords.map(word => word.text).join(' ') || '';
+        // detection.fontSize = sortedBlocks.length > 0 ? totalHeight / sortedBlocks.length : 0;
+
+
       } else if (serviceSettings.ocrService === 'tesseract') {
         const w = x2 - x1;
         const h = y2 - y1;
@@ -591,7 +577,7 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
 
         const ocrResults = await performTesseractOCR(subsection, classIndex);
         // detection.words = ocrResults.boxes;
-        detection.fontSize = ocrResults.fontSize;
+        // detection.fontSize = ocrResults.fontSize;
         detection.text = ocrResults.text;
       }
 
@@ -609,26 +595,3 @@ async function postprocessOutput(outputs, originalWidth, originalHeight, imageDa
 
   return filteredDetections;
 }
-
-
-
-
-// async function translateText(text, sourceLang, targetLang) {
-//   return new Promise((resolve, reject) => {
-//     chrome.runtime.sendMessage(
-//       {
-//         action: "translateText",
-//         text,
-//         sourceLang: sourceLang || serviceSettings.sourceLanguage,
-//         targetLang: targetLang || serviceSettings.targetLanguage,
-//       },
-//       (response) => {
-//         if (response.error) {
-//           reject(new Error(response.error));
-//         } else {
-//           resolve(response.translatedText);
-//         }
-//       }
-//     );
-//   });
-// }

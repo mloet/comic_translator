@@ -99,18 +99,22 @@ function addDetectionButton(img) {
   wrapper.className = 'comic-bubble-detector-wrapper';
   wrapper.style.position = 'relative'; // Ensure relative positioning for the button
 
-  // Create button
+  // Create detection button
   const button = document.createElement('button');
   button.className = 'comic-bubble-detector-button';
-  button.textContent = '🔍';
+  const icon = document.createElement('img');
+  icon.src = chrome.runtime.getURL('icons/question.png');
+  icon.alt = 'Detect comic bubbles';
+  icon.style.width = '50px';
+  icon.style.height = '50px';
+  button.appendChild(icon);
   button.title = 'Detect comic bubbles';
 
-  // Position the button at the top-left
-  button.style.position = 'absolute';
-  button.style.top = '0';
-  button.style.left = '0';
-  button.style.zIndex = '10'; // Ensure it appears above the image
-  button.style.pointerEvents = 'auto'; // Allow clicks on the button
+  // Create toggle button
+  const toggleButton = document.createElement('button');
+  toggleButton.className = 'comic-bubble-toggle-button';
+  toggleButton.textContent = 'HIDE'; // Default state
+  toggleButton.style.display = 'none'; // Initially hidden
 
   // Create results container
   const resultsContainer = document.createElement('div');
@@ -128,18 +132,20 @@ function addDetectionButton(img) {
       // Move image inside wrapper
       wrapper.appendChild(img);
 
-      // Add button and results container
+      // Add buttons and results container
       wrapper.appendChild(button);
+      wrapper.appendChild(toggleButton);
       wrapper.appendChild(resultsContainer);
 
       // Store reference to elements
       img.detectorElements = {
         wrapper,
         button,
-        resultsContainer
+        toggleButton,
+        resultsContainer,
       };
 
-      // Add click handler
+      // Add click handler for detection button
       button.addEventListener('click', (event) => {
         event.stopPropagation(); // Prevent click from affecting underlying elements
 
@@ -148,20 +154,21 @@ function addDetectionButton(img) {
           return;
         }
 
-        // If results exist and are hidden, show them
-        if (resultsContainer.childNodes.length > 0 && resultsContainer.style.display === 'none') {
-          resultsContainer.style.display = 'block';
-          return;
-        }
-
-        // If results exist and are shown, hide them
-        if (resultsContainer.childNodes.length > 0 && resultsContainer.style.display === 'block') {
-          resultsContainer.style.display = 'none';
-          return;
-        }
-
         // If no results yet, process the image
         handleDetectionRequest(img);
+      });
+
+      // Add click handler for toggle button
+      toggleButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+
+        if (resultsContainer.style.display === 'none') {
+          resultsContainer.style.display = 'block'; // Show detections
+          toggleButton.textContent = 'HIDE';
+        } else {
+          resultsContainer.style.display = 'none'; // Hide detections
+          toggleButton.textContent = 'SHOW';
+        }
       });
     }
   } catch (error) {
@@ -187,13 +194,20 @@ function handleDetectionRequest(img) {
   // Mark as processing
   processingImages.set(imageId, true);
 
-  const { button, resultsContainer } = img.detectorElements;
+  const { button, toggleButton, resultsContainer } = img.detectorElements;
+
+  // Hide toggle button 
+  toggleButton.style.display = 'none';
 
   // Show loading state
+  const icon = button.querySelector('img');
+  if (icon) {
+    icon.src = chrome.runtime.getURL('icons/ellipses.png');
+    icon.alt = 'Processing...';
+  }
+
   button.dataset.processing = 'true';
-  button.textContent = '⏳';
   button.title = 'Processing image...';
-  button.style.backgroundColor = 'rgba(200, 100, 0, 0.8)';
 
   // Add a processing indicator to the results container
   resultsContainer.innerHTML = '';
@@ -337,7 +351,7 @@ function handleDetectionResults(imageId, results, error) {
     return;
   }
 
-  const { button, resultsContainer } = img.detectorElements;
+  const { button, toggleButton, resultsContainer } = img.detectorElements;
 
   // Update button state
   button.dataset.processing = 'false';
@@ -349,80 +363,44 @@ function handleDetectionResults(imageId, results, error) {
   processingImages.delete(imageId);
 
   // Handle errors
-  if (error) {
-    console.error(`Detection error for image ${imageId}: ${error}`);
-    handleDetectionError(img, error);
-    return;
+  const icon = button.querySelector('img');
+  if (icon) {
+    if (error) {
+      icon.src = chrome.runtime.getURL('icons/error.png');
+      icon.alt = 'Error occurred';
+      button.title = 'Error occurred. Click to retry.';
+    } else {
+      icon.src = chrome.runtime.getURL('icons/retry.png');
+      icon.alt = 'Retry detection';
+      button.title = 'Retry detection';
+    }
   }
 
-  // If no results or empty results
-  // if (!results || results.length === 0) {
-  //   button.textContent = '👁️';
-  //   button.title = 'No bubbles found (click to retry)';
-  //   button.style.backgroundColor = 'rgba(150, 150, 0, 0.8)';
-
-  //   const noResults = document.createElement('div');
-  //   noResults.textContent = 'No text bubbles detected';
-  //   noResults.style.position = 'absolute';
-  //   noResults.style.top = '50%';
-  //   noResults.style.left = '50%';
-  //   noResults.style.transform = 'translate(-50%, -50%)';
-  //   noResults.style.background = 'rgba(0, 0, 0, 0.7)';
-  //   noResults.style.color = 'white';
-  //   noResults.style.padding = '10px';
-  //   noResults.style.borderRadius = '5px';
-  //   noResults.style.fontSize = '14px';
-
-  //   resultsContainer.style.display = 'block';
-  //   resultsContainer.appendChild(noResults);
-  //   return;
-  // }
-
-  // Store results for future reference
-  detectionResults.set(imageId, results);
-
-  // Success - show results
-  button.textContent = '👁️';
-  button.title = 'Hide/Show detection results';
-  button.style.backgroundColor = 'rgba(0, 200, 0, 0.8)';
-
-  // Get image dimensions
-  const actualWidth = img.naturalWidth;
-  const actualHeight = img.naturalHeight;
-  const imgWidth = img.width;
-  const imgHeight = img.height;
-
-  // Disable observer temporarily to prevent recursion
-  if (observer) {
-    observer.disconnect();
+  if (error) {
+    handleDetectionError(img, error);
+    return;
   }
 
   // Render results
   console.log(`Rendering ${results.length} detections for image ${imageId}`);
   results.forEach((detection, index) => {
     console.log(`Rendering detection ${index + 1}/${results.length}`);
-    renderDetection(detection, resultsContainer, actualWidth, actualHeight, imgWidth, imgHeight);
+    renderDetection(detection, resultsContainer, img.naturalWidth, img.naturalHeight, img.width, img.height);
   });
 
-  // Show results
+  // Show results and enable toggle button
   resultsContainer.style.display = 'block';
-
-  // Re-enable observer
-  setupMutationObserver();
+  toggleButton.style.display = 'block';
+  toggleButton.textContent = 'HIDE';
 }
+
 
 // Render a single detection
 function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-  const { x1, y1, x2, y2, translatedText, words, classIndex } = detection;
+  const { x1, y1, x2, y2, translatedText, classIndex } = detection;
 
   // Skip invalid detections
-  if (
-    x1 === undefined ||
-    y1 === undefined ||
-    x2 === undefined ||
-    y2 === undefined ||
-    translatedText === ''
-  ) {
+  if (!translatedText || x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
     return;
   }
 
@@ -430,50 +408,12 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   const scaleX = imgWidth / actualWidth;
   const scaleY = imgHeight / actualHeight;
 
-  // Draw word bounding boxes as filled rectangles
-  // if (words && words.length > 0 && classIndex !== 2) {
-  //   const paddingFactor = 0.2; // 10% padding
-
-  //   words.forEach(word => {
-  //     const wordX1 = word.boundingBox[0].x * scaleX;
-  //     const wordY1 = word.boundingBox[0].y * scaleY;
-  //     const wordX2 = word.boundingBox[2].x * scaleX;
-  //     const wordY2 = word.boundingBox[2].y * scaleY;
-
-  //     // Calculate width and height of the box
-  //     const boxWidth = wordX2 - wordX1;
-  //     const boxHeight = wordY2 - wordY1;
-
-  //     // Apply padding
-  //     const paddedX1 = wordX1 - boxWidth * paddingFactor;
-  //     const paddedY1 = wordY1 - boxHeight * paddingFactor;
-  //     const paddedX2 = wordX2 + boxWidth * paddingFactor;
-  //     const paddedY2 = wordY2 + boxHeight * paddingFactor;
-
-  //     const wordBox = document.createElement('div');
-  //     wordBox.style.position = 'absolute';
-  //     wordBox.style.left = `${paddedX1}px`;
-  //     wordBox.style.top = `${paddedY1}px`;
-  //     wordBox.style.width = `${paddedX2 - paddedX1}px`;
-  //     wordBox.style.height = `${paddedY2 - paddedY1}px`;
-  //     wordBox.style.backgroundColor = 'rgba(255, 255, 255, 1)';
-  //     wordBox.style.zIndex = '2'; // Ensure it appears below the text
-  //     wordBox.style.borderRadius = '10px';
-
-  //     container.appendChild(wordBox);
-  //   });
-  // }
-
   const scaledX1 = x1 * scaleX;
   const scaledY1 = y1 * scaleY;
   const scaledX2 = x2 * scaleX;
   const scaledY2 = y2 * scaleY;
   const boxWidth = scaledX2 - scaledX1;
   const boxHeight = scaledY2 - scaledY1;
-
-  // Estimate font size and scale it
-  const estimatedFontSize = detection.fontSize; // Use detection's font size or fallback to box height
-  const scaledFontSize = estimatedFontSize * scaleY;
 
   // Create a container for the detection
   const detectionContainer = document.createElement('div');
@@ -483,21 +423,21 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   detectionContainer.style.width = `${boxWidth}px`;
   detectionContainer.style.height = `${boxHeight}px`;
   detectionContainer.style.zIndex = '3';
-  detectionContainer.style.pointerEvents = 'none'; // Prevent clicks on the container
+  detectionContainer.style.pointerEvents = 'none';
 
   // Set background style based on classIndex
   if (classIndex === 2) {
-    detectionContainer.style.backgroundColor = 'rgba(0, 0, 0, 0)'; // Semi-transparent black
-    detectionContainer.style.backdropFilter = 'blur(10px)'; // Apply heavy blur
+    detectionContainer.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+    detectionContainer.style.backdropFilter = 'blur(10px)';
     detectionContainer.style.borderRadius = '10px';
   } else {
-    detectionContainer.style.backgroundColor = 'rgba(255, 255, 255, 1)'; // Solid white
-    detectionContainer.style.borderRadius = '10px';
+    detectionContainer.style.backgroundColor = 'rgba(255, 255, 255, 1)';
+    detectionContainer.style.borderRadius = '20px';
   }
 
   // Create text overlay
   const textDiv = document.createElement('div');
-  textDiv.textContent = (translatedText + '\u200E') || 'No text detected';
+  textDiv.textContent = translatedText || 'No text detected';
   textDiv.style.position = 'absolute';
   textDiv.style.width = '100%';
   textDiv.style.height = '100%';
@@ -509,13 +449,12 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   textDiv.style.fontStyle = 'italic';
   textDiv.style.zIndex = '4';
   textDiv.style.color = 'black';
-  // textDiv.style.fontSize = `${scaledFontSize}px`;
   textDiv.style.textAlign = 'center';
-  textDiv.style.whiteSpace = 'pre-wrap';
+  textDiv.style.whiteSpace = 'pre-wrap'; // Allow text wrapping
   textDiv.style.textShadow = `-1px -1px 0 white, 1px -1px 0 white, -1px  1px 0 white, 1px  1px 0 white`;
 
   // Dynamically scale font size to fit within the bounding box
-  let fitFontSize = scaledFontSize; // Start with the height of the box
+  let fitFontSize = boxHeight; // Start with the height of the box
   textDiv.style.fontSize = `${fitFontSize}px`;
 
   // Append to the container temporarily to measure dimensions
@@ -523,119 +462,18 @@ function renderDetection(detection, container, actualWidth, actualHeight, imgWid
   container.appendChild(detectionContainer);
 
   // Measure and adjust font size
-  while (textDiv.scrollWidth > boxWidth || textDiv.scrollHeight > boxHeight) {
+  while ((textDiv.scrollHeight > boxHeight) && fitFontSize > 5) {
     fitFontSize -= 1; // Decrease font size
     textDiv.style.fontSize = `${fitFontSize}px`;
-
-    // Break if font size becomes too small
-    if (fontSize <= 5) {
-      break;
-    }
   }
+
+  // Add logic to break long words with hyphens
+  textDiv.style.wordBreak = 'break-word'; // Allow breaking long words
+  textDiv.style.hyphens = 'auto'; // Automatically insert hyphens where appropriate
 
   // Append the detection container to the main container
   container.appendChild(detectionContainer);
 }
-
-// function renderDetection(detection, container, actualWidth, actualHeight, imgWidth, imgHeight) {
-//   const { x1, y1, x2, y2, translatedText, words, classIndex } = detection;
-
-//   // Skip invalid detections
-//   if (
-//     x1 === undefined ||
-//     y1 === undefined ||
-//     x2 === undefined ||
-//     y2 === undefined ||
-//     translatedText === ''
-//   ) {
-//     return;
-//   }
-
-//   // Calculate scaling factors
-//   const scaleX = imgWidth / actualWidth;
-//   const scaleY = imgHeight / actualHeight;
-
-//   // Draw word bounding boxes as filled rectangles
-//   if (words && words.length > 0) {
-//     const paddingFactor = 0.1; // 10% padding
-
-//     words.forEach(word => {
-//       const wordX1 = word.boundingBox[0].x * scaleX / 3;
-//       const wordY1 = word.boundingBox[0].y * scaleY / 3;
-//       const wordX2 = word.boundingBox[2].x * scaleX / 3;
-//       const wordY2 = word.boundingBox[2].y * scaleY / 3;
-
-//       // Calculate width and height of the box
-//       const boxWidth = wordX2 - wordX1;
-//       const boxHeight = wordY2 - wordY1;
-
-//       // Apply padding
-//       const paddedX1 = wordX1 - boxWidth * paddingFactor;
-//       const paddedY1 = wordY1 - boxHeight * paddingFactor;
-//       const paddedX2 = wordX2 + boxWidth * paddingFactor;
-//       const paddedY2 = wordY2 + boxHeight * paddingFactor;
-
-//       const wordBox = document.createElement('div');
-//       wordBox.style.position = 'absolute';
-//       wordBox.style.left = `${paddedX1}px`;
-//       wordBox.style.top = `${paddedY1}px`;
-//       wordBox.style.width = `${paddedX2 - paddedX1}px`;
-//       wordBox.style.height = `${paddedY2 - paddedY1}px`;
-//       wordBox.style.backgroundColor = 'rgba(255, 255, 255, 1)'; // Semi-transparent white background
-//       wordBox.style.zIndex = '2'; // Ensure it appears below the text
-
-//       container.appendChild(wordBox);
-//     });
-//   }
-
-//   const scaledX1 = x1 * scaleX;
-//   const scaledY1 = y1 * scaleY;
-//   const scaledX2 = x2 * scaleX;
-//   const scaledY2 = y2 * scaleY;
-//   const boxWidth = scaledX2 - scaledX1;
-//   const boxHeight = scaledY2 - scaledY1;
-
-//   // Estimate font size and scale it
-//   const estimatedFontSize = detection.fontSize; // Use detection's font size or fallback to box height
-//   const scaledFontSize = estimatedFontSize * scaleY;
-
-//   // Create a container for the detection
-//   const detectionContainer = document.createElement('div');
-//   detectionContainer.style.position = 'absolute';
-//   detectionContainer.style.left = `${scaledX1}px`;
-//   detectionContainer.style.top = `${scaledY1}px`;
-//   detectionContainer.style.width = `${boxWidth}px`;
-//   detectionContainer.style.height = `${boxHeight}px`;
-//   detectionContainer.style.zIndex = '3';
-//   detectionContainer.style.pointerEvents = 'none'; // Prevent clicks on the container
-
-//   // Create text overlay
-//   const textDiv = document.createElement('div');
-//   textDiv.textContent = translatedText || 'No text detected';
-//   textDiv.style.position = 'absolute';
-//   textDiv.style.width = '100%';
-//   textDiv.style.height = '100%';
-//   textDiv.style.display = 'flex';
-//   textDiv.style.alignItems = 'center';
-//   textDiv.style.justifyContent = 'center';
-//   textDiv.style.fontFamily = 'CC Wild Words, Comic Sans MS, Arial, sans-serif';
-//   textDiv.style.fontWeight = 'bold';
-//   textDiv.style.fontStyle = 'italic';
-//   textDiv.style.zIndex = '4';
-//   textDiv.style.backgroundColor = 'rgba(255, 255, 255, 0)';
-//   textDiv.style.color = 'black';
-//   textDiv.style.fontSize = `${scaledFontSize}px`;
-//   textDiv.style.textAlign = 'center';
-//   textDiv.style.textShadow = `-1px -1px 0 white, 1px -1px 0 white, -1px  1px 0 white, 1px  1px 0 white`;
-
-//   // Append elements to the detection container
-//   detectionContainer.appendChild(textDiv);
-
-//   // Append the detection container to the main container
-//   container.appendChild(detectionContainer);
-// }
-
-// Set up mutation observer to handle dynamically added images
 
 function setupMutationObserver() {
   // Clean up existing observer
